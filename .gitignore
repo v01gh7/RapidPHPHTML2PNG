@@ -46,6 +46,12 @@ test-results/
 # OS files
 Thumbs.db
 
+# RapidHTML2PNG specific
+# Output directory - keep structure but ignore generated PNGs
+/assets/media/rapidhtml2png/*.png
+# Feature database
+features.db
+
 e2e/.test-pro*
 only_development_example__only/
 mcp.*

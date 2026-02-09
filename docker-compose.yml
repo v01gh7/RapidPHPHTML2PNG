@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rapidhtml2png-php
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www/html
+      - ./assets/media/rapidhtml2png:/var/www/html/assets/media/rapidhtml2png
+    environment:
+      - PHP_MEMORY_LIMIT=256M
+      - UPLOAD_MAX_FILESIZE=10M
+      - POST_MAX_SIZE=10M
+    restart: unless-stopped
+    networks:
+      - rapidhtml2png-network
+
+networks:
+  rapidhtml2png-network:
+    driver: bridge
