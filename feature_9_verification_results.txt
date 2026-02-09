@@ -1,0 +1,149 @@
+# Feature #9 Verification Results: Parses multipart/form-data input
+
+## Test Date
+2026-02-09
+
+## Feature Description
+Verify API correctly parses multipart/form-data POST requests with html_blocks and css_url parameters.
+
+## Test Results
+
+### Docker Container Tests (8/8 PASSED - 100%)
+
+All tests executed inside Docker container with direct PHP HTTP requests:
+
+#### Test 1: Multipart with single html_blocks string ✅
+- Sent: POST with multipart/form-data containing single HTML block
+- Expected: Status 200, html_blocks_count = 1
+- Result: PASSED - Count: 1
+
+#### Test 2: Multipart with array notation html_blocks[0] ✅
+- Sent: POST with html_blocks[0], html_blocks[1], html_blocks[2]
+- Expected: Status 200, html_blocks_count = 3
+- Result: PASSED - Count: 3
+
+#### Test 3: Multipart with html_blocks and css_url ✅
+- Sent: POST with html_blocks and css_url parameters
+- Expected: Both parameters parsed correctly
+- Result: PASSED - CSS URL: http://example.com/styles.css
+
+#### Test 4: Multipart with Cyrillic characters ✅
+- Sent: POST with Russian characters in HTML
+- Expected: Content preserved, UTF-8 encoding maintained
+- Result: PASSED - Preview length: 78 (Cyrillic preserved)
+
+#### Test 5: Multipart with empty html_blocks should return error ✅
+- Sent: POST with empty html_blocks value
+- Expected: Status 400 with error message
+- Result: PASSED - Error: Missing required parameter: html_blocks
+
+#### Test 6: Multipart without html_blocks should return error ✅
+- Sent: POST without html_blocks parameter
+- Expected: Status 400 with error message
+- Result: PASSED - Error: Missing required parameter: html_blocks
+
+#### Test 7: Multipart with complex HTML structure ✅
+- Sent: POST with nested HTML elements (div, h1, p, ul, li)
+- Expected: Complex HTML parsed correctly
+- Result: PASSED - HTML preserved, CSS URL: https://cdn.example.com/main.css
+
+#### Test 8: Response has correct Content-Type header ✅
+- Sent: POST request
+- Expected: Content-Type: application/json; charset=utf-8
+- Result: PASSED - Content-Type: application/json; charset=utf-8
+
+### Host System Tests (4/4 PASSED - 100%)
+
+Tests executed from host system using curl:
+
+#### Test 1: Single HTML block via multipart ✅
+- Status: 200
+- Result: PASSED
+
+#### Test 2: HTML block with CSS URL ✅
+- Status: 200
+- Result: PASSED
+
+#### Test 3: Missing html_blocks (should fail) ✅
+- Status: 400
+- Result: PASSED
+
+#### Test 4: Content-Type verification ✅
+- Header: Content-Type: application/json; charset=utf-8
+- Result: PASSED
+
+## Implementation Details
+
+### Code Location
+- File: `convert.php`
+- Function: `parseInput()` (lines 89-114)
+
+### How It Works
+
+1. **Content-Type Detection**: Checks `$_SERVER['CONTENT_TYPE']` header
+
+2. **Multipart Handler**:
+   ```php
+   if (strpos($contentType, 'multipart/form-data') !== false ||
+       strpos($contentType, 'application/x-www-form-urlencoded') !== false) {
+       return $_POST;
+   }
+   ```
+
+3. **Automatic Array Parsing**: PHP's $_POST automatically handles:
+   - Simple field values: `html_blocks=<div>...</div>`
+   - Array notation: `html_blocks[0]`, `html_blocks[1]`, etc.
+   - Multiple values with same name
+
+4. **Validation Chain**:
+   - `parseInput()` extracts raw data from $_POST
+   - `validateHtmlBlocks()` ensures proper array structure
+   - `validateCssUrl()` validates optional CSS URL parameter
+
+## Feature Requirements Verification
+
+### Requirement 1: Send POST request with Content-Type: multipart/form-data ✅
+- Verified through multiple test cases
+- Both single and array notation work correctly
+
+### Requirement 2: Include html_blocks and css_url as form fields ✅
+- Both parameters parsed correctly
+- css_url is optional, properly handled when missing
+
+### Requirement 3: Verify $_POST or parsed input contains both parameters ✅
+- Parameters extracted from $_POST superglobal
+- Array notation automatically converted to PHP arrays
+
+### Requirement 4: Check that values match what was sent ✅
+- Preview in response shows actual content received
+- Values preserved exactly as sent (verified with Cyrillic test)
+
+### Requirement 5: Confirm no parsing errors or empty values ✅
+- Empty values properly rejected with 400 status
+- Complex HTML structures parsed without errors
+- Special characters (Cyrillic, HTML entities) preserved
+
+## Edge Cases Tested
+
+1. ✅ Empty html_blocks - Rejected with 400
+2. ✅ Missing html_blocks - Rejected with 400
+3. ✅ Single string converted to array automatically
+4. ✅ Array notation (html_blocks[0]) works correctly
+5. ✅ UTF-8/Cyrillic characters preserved
+6. ✅ Complex nested HTML parsed correctly
+7. ✅ Optional css_url parameter handled properly
+8. ✅ Content-Type header always application/json
+
+## Conclusion
+
+**Feature #9: PASSES** ✅
+
+All requirements met:
+- Multipart/form-data input correctly parsed
+- Both html_blocks and css_url parameters extracted
+- Values match what was sent
+- No parsing errors with valid input
+- Proper error handling for invalid input
+
+The API correctly handles multipart/form-data POST requests with full
+validation and appropriate error responses.
