@@ -686,6 +686,392 @@ function renderWithWkHtmlToImage($htmlBlocks, $cssContent, $outputPath) {
 }
 
 /**
+ * Render HTML to PNG using ImageMagick (Imagick extension)
+ *
+ * This function uses the ImageMagick library through PHP's Imagick extension
+ * to render HTML content to a PNG image with transparent background.
+ *
+ * @param array $htmlBlocks Array of HTML content blocks
+ * @param string|null $cssContent Optional CSS content to apply
+ * @param string $outputPath Path where PNG file should be saved
+ * @return array Result with success status and metadata
+ */
+function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
+    // Detect ImageMagick availability
+    $detection = detectAvailableLibraries();
+    $imAvailable = $detection['detected_libraries']['imagemagick']['available'] ?? false;
+
+    if (!$imAvailable) {
+        return [
+            'success' => false,
+            'error' => 'ImageMagick is not available',
+            'reason' => $detection['detected_libraries']['imagemagick']['reason'] ?? 'Unknown reason'
+        ];
+    }
+
+    try {
+        // Combine HTML blocks
+        $html = implode('', $htmlBlocks);
+
+        // Create a complete HTML document with CSS
+        $fullHtml = '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            background: transparent;
+            font-family: Arial, sans-serif;
+        }
+    </style>';
+
+        // Add CSS content if provided
+        if ($cssContent) {
+            $fullHtml .= '<style>' . $cssContent . '</style>';
+        }
+
+        $fullHtml .= '</head>
+<body>' . $html . '</body>
+</html>';
+
+        // Create temporary HTML file
+        $tempHtmlFile = tempnam(sys_get_temp_dir(), 'imagick_');
+        $tempHtmlFileWithExt = $tempHtmlFile . '.html';
+        rename($tempHtmlFile, $tempHtmlFileWithExt);
+
+        file_put_contents($tempHtmlFileWithExt, $fullHtml);
+
+        // Create new Imagick object
+        $imagick = new Imagick();
+
+        // Set up Imagick for rendering
+        $imagick->setResolution(96, 96); // Standard web resolution
+
+        // Read the HTML file and convert to image
+        // Note: Imagick doesn't natively render HTML, so we use a workaround
+        // We'll create an image from the HTML content using annotation
+
+        // Extract text content from HTML for rendering
+        $text = strip_tags($html);
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Parse basic CSS for styling
+        $cssStyles = parseBasicCss($cssContent);
+
+        // Extract styles
+        $fontSize = $cssStyles['font_size'] ?? 14;
+        $fontColor = $cssStyles['color'] ?? '#000000';
+
+        // Create a new image with transparent background
+        $imagick->newImage(800, 100, new ImagickPixel('transparent'));
+
+        // Set up text rendering
+        $imagick->setFillColor(new ImagickPixel($fontColor));
+        $imagick->setFont('Arial');
+        $imagick->setFontSize($fontSize);
+        $imagick->setGravity(Imagick::GRAVITY_NORTHWEST);
+
+        // Add text to image (with word wrapping)
+        $text = wordwrap($text, 80, "\n", true);
+        $imagick->annotateImage(new ImagickDraw(), 10, 10, 0, $text);
+
+        // Trim image to content size
+        $imagick->trimImage(0);
+
+        // Add some padding
+        $imagick->borderImage('transparent', 10, 10);
+
+        // Set format to PNG
+        $imagick->setImageFormat('png');
+
+        // Enable transparency
+        $imagick->setImageAlphaChannel(Imagick::ALPHACHANNEL_ACTIVATE);
+        $imagick->setBackgroundColor(new ImagickPixel('transparent'));
+
+        // Write the image to file
+        $imagick->writeImage($outputPath);
+
+        // Clean up
+        $imagick->clear();
+        $imagick->destroy();
+        @unlink($tempHtmlFileWithExt);
+
+        // Verify output file was created
+        if (!file_exists($outputPath)) {
+            return [
+                'success' => false,
+                'error' => 'Output file was not created',
+                'output_path' => $outputPath
+            ];
+        }
+
+        // Get file info
+        $imageInfo = getimagesize($outputPath);
+        if ($imageInfo === false) {
+            return [
+                'success' => false,
+                'error' => 'Generated file is not a valid image',
+                'output_path' => $outputPath
+            ];
+        }
+
+        return [
+            'success' => true,
+            'engine' => 'imagemagick',
+            'output_path' => $outputPath,
+            'file_size' => filesize($outputPath),
+            'width' => $imageInfo[0],
+            'height' => $imageInfo[1],
+            'mime_type' => $imageInfo['mime']
+        ];
+
+    } catch (ImagickException $e) {
+        return [
+            'success' => false,
+            'error' => 'ImageMagick rendering failed',
+            'exception' => get_class($e),
+            'message' => $e->getMessage()
+        ];
+    } catch (Exception $e) {
+        return [
+            'success' => false,
+            'error' => 'Unexpected error during ImageMagick rendering',
+            'exception' => get_class($e),
+            'message' => $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Render HTML to PNG using GD library (baseline fallback)
+ *
+ * This function uses PHP's GD library to create a basic PNG image from HTML.
+ * It provides a simplified rendering that handles text elements with basic formatting.
+ *
+ * @param array $htmlBlocks Array of HTML content blocks
+ * @param string|null $cssContent Optional CSS content (basic support only)
+ * @param string $outputPath Path where PNG file should be saved
+ * @return array Result with success status and metadata
+ */
+function renderWithGD($htmlBlocks, $cssContent, $outputPath) {
+    // Detect GD availability
+    $detection = detectAvailableLibraries();
+    $gdAvailable = $detection['detected_libraries']['gd']['available'] ?? false;
+
+    if (!$gdAvailable) {
+        return [
+            'success' => false,
+            'error' => 'GD library is not available',
+            'reason' => 'GD extension not loaded or gd_info() failed'
+        ];
+    }
+
+    // Combine all HTML blocks
+    $html = implode('', $htmlBlocks);
+
+    // Parse HTML to extract text content
+    // GD is limited, so we'll do basic text extraction
+    $text = extractTextFromHtml($html);
+
+    // Extract basic CSS properties for styling
+    $cssStyles = parseBasicCss($cssContent);
+
+    // Determine font size from CSS or use default
+    $fontSize = $cssStyles['font_size'] ?? 16;
+    $fontColor = $cssStyles['color'] ?? '#000000';
+    $backgroundColor = $cssStyles['background'] ?? null;
+
+    // Load font (use built-in font for simplicity)
+    $font = 5; // Built-in font (largest available)
+    $fontWidth = imagefontwidth($font);
+    $fontHeight = imagefontheight($font);
+
+    // Calculate text dimensions
+    $lines = explode("\n", $text);
+    $maxWidth = 0;
+    foreach ($lines as $line) {
+        $lineWidth = strlen($line) * $fontWidth;
+        if ($lineWidth > $maxWidth) {
+            $maxWidth = $lineWidth;
+        }
+    }
+    $totalHeight = count($lines) * $fontHeight;
+
+    // Add padding
+    $padding = 10;
+    $imageWidth = $maxWidth + ($padding * 2);
+    $imageHeight = $totalHeight + ($padding * 2);
+
+    // Create image
+    $image = imagecreatetruecolor($imageWidth, $imageHeight);
+
+    // Allocate colors
+    if ($backgroundColor && $backgroundColor !== 'transparent') {
+        $bgRgb = hexColorToRgb($backgroundColor);
+        $bgColor = imagecolorallocate($image, $bgRgb['r'], $bgRgb['g'], $bgRgb['b']);
+        imagefill($image, 0, 0, $bgColor);
+    } else {
+        // Transparent background
+        imagealphablending($image, true);
+        imagesavealpha($image, true);
+        $transparent = imagecolorallocatealpha($image, 255, 255, 255, 127);
+        imagefill($image, 0, 0, $transparent);
+    }
+
+    // Allocate text color
+    $textRgb = hexColorToRgb($fontColor);
+    $textColor = imagecolorallocate($image, $textRgb['r'], $textRgb['g'], $textRgb['b']);
+
+    // Draw text line by line
+    $y = $padding;
+    foreach ($lines as $line) {
+        imagestring($image, $font, $padding, $y, $line, $textColor);
+        $y += $fontHeight;
+    }
+
+    // Save PNG with transparency
+    imagepng($image, $outputPath);
+    imagedestroy($image);
+
+    // Verify output file was created
+    if (!file_exists($outputPath)) {
+        return [
+            'success' => false,
+            'error' => 'Output file was not created',
+            'output_path' => $outputPath
+        ];
+    }
+
+    // Get file info
+    $imageInfo = getimagesize($outputPath);
+    if ($imageInfo === false) {
+        return [
+            'success' => false,
+            'error' => 'Generated file is not a valid image',
+            'output_path' => $outputPath
+        ];
+    }
+
+    return [
+        'success' => true,
+        'engine' => 'gd',
+        'output_path' => $outputPath,
+        'file_size' => filesize($outputPath),
+        'width' => $imageInfo[0],
+        'height' => $imageInfo[1],
+        'mime_type' => $imageInfo['mime'],
+        'text_lines' => count($lines),
+        'text_preview' => substr($text, 0, 50) . (strlen($text) > 50 ? '...' : '')
+    ];
+}
+
+/**
+ * Extract plain text from HTML string
+ *
+ * This is a simple text extraction function for GD rendering.
+ * It strips HTML tags and converts entities to text.
+ *
+ * @param string $html HTML content
+ * @return string Extracted plain text
+ */
+function extractTextFromHtml($html) {
+    // Decode HTML entities
+    $text = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+    // Remove HTML tags
+    $text = strip_tags($text);
+
+    // Convert common HTML whitespace to newlines
+    $text = str_replace(['<br>', '<br/>', '<br />', '</p>'], "\n", $text);
+    $text = strip_tags($text); // Strip tags again after replacing breaks
+
+    // Normalize whitespace
+    $text = preg_replace('/\s+/', ' ', $text);
+    $text = str_replace([' , ', ' . ', ' ! ', ' ? '], [', ', '. ', '! ', '? '], $text);
+
+    // Trim and clean up
+    $text = trim($text);
+    $text = preg_replace('/\n\s*\n/', "\n", $text); // Remove empty lines
+
+    return $text;
+}
+
+/**
+ * Parse basic CSS properties from CSS content
+ *
+ * Extracts simple CSS properties for GD rendering.
+ * This is a very basic parser with limited CSS support.
+ *
+ * @param string|null $cssContent CSS content
+ * @return array Associative array of CSS properties
+ */
+function parseBasicCss($cssContent) {
+    $styles = [
+        'font_size' => 16,
+        'color' => '#000000',
+        'background' => 'transparent'
+    ];
+
+    if (empty($cssContent)) {
+        return $styles;
+    }
+
+    // Try to extract font-size
+    if (preg_match('/font-size\s*:\s*(\d+)\s*(px|pt|em)?/i', $cssContent, $matches)) {
+        $size = intval($matches[1]);
+        // Convert to approximate pixel size
+        $unit = strtolower($matches[2] ?? 'px');
+        switch ($unit) {
+            case 'pt':
+                $styles['font_size'] = intval($size * 1.33);
+                break;
+            case 'em':
+                $styles['font_size'] = intval($size * 16);
+                break;
+            default:
+                $styles['font_size'] = $size;
+        }
+    }
+
+    // Try to extract color
+    if (preg_match('/color\s*:\s*(#[0-9a-fA-F]{3,6}|[a-zA-Z]+)/i', $cssContent, $matches)) {
+        $styles['color'] = $matches[1];
+    }
+
+    // Try to extract background color
+    if (preg_match('/background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,6}|[a-zA-Z]+|transparent)/i', $cssContent, $matches)) {
+        $styles['background'] = $matches[1];
+    }
+
+    return $styles;
+}
+
+/**
+ * Convert hex color to RGB array
+ *
+ * @param string $hex Hex color code (with or without #)
+ * @return array Associative array with r, g, b values (0-255)
+ */
+function hexColorToRgb($hex) {
+    // Remove # if present
+    $hex = ltrim($hex, '#');
+
+    // Expand shorthand hex (3 digits to 6)
+    if (strlen($hex) === 3) {
+        $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+    }
+
+    // Parse RGB values
+    $r = hexdec(substr($hex, 0, 2));
+    $g = hexdec(substr($hex, 2, 2));
+    $b = hexdec(substr($hex, 4, 2));
+
+    return ['r' => $r, 'g' => $g, 'b' => $b];
+}
+
+/**
  * Convert HTML blocks to PNG image
  *
  * This is the main rendering function that automatically selects the best
@@ -729,17 +1115,11 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
             break;
 
         case 'imagemagick':
-            // Will be implemented in feature #25
-            sendError(501, 'ImageMagick rendering not yet implemented', [
-                'library' => 'imagemagick'
-            ]);
+            $result = renderWithImageMagick($htmlBlocks, $cssContent, $outputPath);
             break;
 
         case 'gd':
-            // Will be implemented in feature #26
-            sendError(501, 'GD rendering not yet implemented', [
-                'library' => 'gd'
-            ]);
+            $result = renderWithGD($htmlBlocks, $cssContent, $outputPath);
             break;
 
         default:

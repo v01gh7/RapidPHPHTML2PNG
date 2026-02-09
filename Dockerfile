@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libfreetype6-dev \
     libonig-dev \
+    libmagickwand-dev \
     zip \
     unzip \
     wget \
@@ -23,6 +24,10 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     mbstring \
     pdo \
     pdo_mysql
+
+# Install Imagick extension from PECL
+RUN pecl install imagick-3.7.0 \
+    && docker-php-ext-enable imagick
 
 # Enable Apache modules
 RUN a2enmod rewrite
