@@ -124,10 +124,122 @@ function sendError($code, $message, $data = null) {
     if ($data !== null) {
         $response['data'] = $data;
     }
+
+    // Log the error for debugging
+    logError($code, $message, $data);
+
     echo json_encode($response, JSON_PRETTY_PRINT);
     if (!defined('TEST_MODE')) {
         exit;
     }
+}
+
+/**
+ * Log error to application error log
+ *
+ * Creates structured log entries with timestamp, HTTP status code,
+ * error message, and sanitized context data. Sensitive information
+ * is filtered out before logging.
+ *
+ * @param int $code HTTP status code
+ * @param string $message Error message
+ * @param mixed $data Additional data (will be sanitized)
+ */
+function logError($code, $message, $data = null) {
+    $logPath = __DIR__ . '/logs/application_errors.log';
+    $logDir = dirname($logPath);
+
+    // Create log directory if it doesn't exist
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
+
+    // Sanitize data to remove sensitive information
+    $safeData = sanitizeLogData($data);
+
+    // Build log entry
+    $timestamp = date('Y-m-d H:i:s');
+    $logEntry = "[$timestamp] HTTP $code - $message\n";
+
+    // Add request context
+    if (isset($_SERVER['REQUEST_METHOD'])) {
+        $logEntry .= "  Method: {$_SERVER['REQUEST_METHOD']}\n";
+    }
+    if (isset($_SERVER['REQUEST_URI'])) {
+        // Sanitize URI to remove query string with potential sensitive data
+        $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+        $logEntry .= "  URI: $uri\n";
+    }
+    if (isset($_SERVER['REMOTE_ADDR'])) {
+        // Mask IP address for privacy (keep first 2 octets)
+        $ip = $_SERVER['REMOTE_ADDR'];
+        $maskedIp = preg_replace('/(\d+\.\d+)\.\d+\.\d+/', '$1.0.0.0', $ip);
+        $logEntry .= "  Client IP: $maskedIp\n";
+    }
+
+    // Add sanitized context data
+    if ($safeData !== null) {
+        $logEntry .= "  Context: " . json_encode($safeData, JSON_UNESCAPED_SLASHES) . "\n";
+    }
+
+    $logEntry .= "\n";
+
+    // Append to log file
+    file_put_contents($logPath, $logEntry, FILE_APPEND | LOCK_EX);
+}
+
+/**
+ * Sanitize data for logging
+ *
+ * Removes or masks sensitive information before logging.
+ * Filters out passwords, API keys, tokens, etc.
+ *
+ * @param mixed $data Data to sanitize
+ * @return mixed Sanitized data
+ */
+function sanitizeLogData($data) {
+    if ($data === null) {
+        return null;
+    }
+
+    if (!is_array($data)) {
+        // For non-array data, just return as string if it's safe
+        return (string)$data;
+    }
+
+    $sensitiveKeys = [
+        'password', 'passwd', 'secret', 'api_key', 'apikey', 'api-key',
+        'token', 'authorization', 'auth', 'session', 'cookie',
+        'private_key', 'privatekey', 'access_token', 'accesstoken'
+    ];
+
+    $sanitized = [];
+
+    foreach ($data as $key => $value) {
+        $lowerKey = strtolower(str_replace(['-', '_', ' '], '', $key));
+
+        // Check if this key contains sensitive information
+        $isSensitive = false;
+        foreach ($sensitiveKeys as $sensitive) {
+            if (strpos($lowerKey, $sensitive) !== false) {
+                $isSensitive = true;
+                break;
+            }
+        }
+
+        if ($isSensitive) {
+            // Mask sensitive values
+            $sanitized[$key] = '[REDACTED]';
+        } elseif (is_array($value)) {
+            // Recursively sanitize nested arrays
+            $sanitized[$key] = sanitizeLogData($value);
+        } else {
+            // Keep non-sensitive values as-is
+            $sanitized[$key] = $value;
+        }
+    }
+
+    return $sanitized;
 }
 
 /**
