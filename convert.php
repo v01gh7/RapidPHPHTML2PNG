@@ -31,6 +31,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 /**
+ * Get library selection log file path
+ *
+ * @return string Path to log file
+ */
+function getLibraryLogPath() {
+    $logDir = __DIR__ . '/logs';
+    if (!is_dir($logDir)) {
+        mkdir($logDir, 0755, true);
+    }
+    return $logDir . '/library_selection.log';
+}
+
+/**
+ * Log library selection for debugging
+ *
+ * @param string $selectedLibrary The library that was selected
+ * @param array $detectionResults Full detection results from all libraries
+ * @param string $reason Explanation of why this library was chosen
+ * @return void
+ */
+function logLibrarySelection($selectedLibrary, $detectionResults, $reason = '') {
+    $logPath = getLibraryLogPath();
+    $timestamp = date('Y-m-d H:i:s');
+    $logEntry = sprintf(
+        "[%s] Selected Library: %s\n",
+        $timestamp,
+        $selectedLibrary ? strtoupper($selectedLibrary) : 'NONE'
+    );
+
+    // Add reason
+    if (!empty($reason)) {
+        $logEntry .= sprintf("  Reason: %s\n", $reason);
+    }
+
+    // Add detection details for each library
+    if (isset($detectionResults['detected_libraries'])) {
+        $logEntry .= "  Detection Results:\n";
+        foreach ($detectionResults['detected_libraries'] as $libName => $libInfo) {
+            $status = $libInfo['available'] ? 'AVAILABLE' : 'UNAVAILABLE';
+            $logEntry .= sprintf("    - %s: %s\n", strtoupper($libName), $status);
+
+            if ($libInfo['available']) {
+                // Add details for available libraries
+                if (isset($libInfo['version'])) {
+                    $logEntry .= sprintf("      Version: %s\n", $libInfo['version']);
+                }
+                if (isset($libInfo['path'])) {
+                    $logEntry .= sprintf("      Path: %s\n", $libInfo['path']);
+                }
+                if (isset($libInfo['info'])) {
+                    $infoStr = json_encode($libInfo['info'], JSON_UNESCAPED_SLASHES);
+                    $logEntry .= sprintf("      Info: %s\n", $infoStr);
+                }
+            } else {
+                // Add reason for unavailable libraries
+                if (isset($libInfo['reason'])) {
+                    $logEntry .= sprintf("      Reason: %s\n", $libInfo['reason']);
+                }
+                if (isset($libInfo['error'])) {
+                    $logEntry .= sprintf("      Error: %s\n", $libInfo['error']);
+                }
+            }
+        }
+    }
+
+    $logEntry .= "\n";
+
+    // Append to log file
+    file_put_contents($logPath, $logEntry, FILE_APPEND | LOCK_EX);
+}
+
+/**
  * Send JSON error response
  *
  * @param int $code HTTP status code
@@ -476,6 +548,218 @@ function generateContentHash($htmlBlocks, $cssContent = null) {
 }
 
 /**
+ * Get output directory path for PNG files
+ *
+ * @return string Path to output directory
+ */
+function getOutputDirectory() {
+    $outputDir = __DIR__ . '/assets/media/rapidhtml2png';
+    if (!is_dir($outputDir)) {
+        if (!mkdir($outputDir, 0755, true)) {
+            sendError(500, 'Failed to create output directory', [
+                'output_dir' => $outputDir
+            ]);
+        }
+    }
+    return $outputDir;
+}
+
+/**
+ * Render HTML to PNG using wkhtmltoimage
+ *
+ * This function uses the wkhtmltoimage command-line tool to render HTML content
+ * to a PNG image with transparent background.
+ *
+ * @param array $htmlBlocks Array of HTML content blocks
+ * @param string|null $cssContent Optional CSS content to apply
+ * @param string $outputPath Path where PNG file should be saved
+ * @return array Result with success status and metadata
+ */
+function renderWithWkHtmlToImage($htmlBlocks, $cssContent, $outputPath) {
+    // Detect wkhtmltoimage availability
+    $detection = detectAvailableLibraries();
+    $wkAvailable = $detection['detected_libraries']['wkhtmltoimage']['available'] ?? false;
+
+    if (!$wkAvailable) {
+        return [
+            'success' => false,
+            'error' => 'wkhtmltoimage is not available',
+            'reason' => $detection['detected_libraries']['wkhtmltoimage']['reason'] ?? 'Unknown reason'
+        ];
+    }
+
+    // Get wkhtmltoimage binary path
+    $wkPath = $detection['detected_libraries']['wkhtmltoimage']['path'] ?? 'wkhtmltoimage';
+
+    // Combine HTML blocks
+    $html = implode('', $htmlBlocks);
+
+    // Create a complete HTML document with CSS
+    $fullHtml = '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+        }
+    </style>';
+
+    // Add CSS content if provided
+    if ($cssContent) {
+        $fullHtml .= '<style>' . $cssContent . '</style>';
+    }
+
+    $fullHtml .= '</head>
+<body>' . $html . '</body>
+</html>';
+
+    // Create temporary HTML file
+    $tempHtmlFile = tempnam(sys_get_temp_dir(), 'wkhtml_');
+    $tempHtmlFileWithExt = $tempHtmlFile . '.html';
+    rename($tempHtmlFile, $tempHtmlFileWithExt);
+
+    file_put_contents($tempHtmlFileWithExt, $fullHtml);
+
+    // Build wkhtmltoimage command
+    $command = escapeshellcmd($wkPath);
+    $command .= ' --format png';
+    $command .= ' --transparent';
+    $command .= ' --width 800';  // Default width
+    $command .= ' ' . escapeshellarg($tempHtmlFileWithExt);
+    $command .= ' ' . escapeshellarg($outputPath);
+
+    // Execute command
+    $output = [];
+    $returnVar = 0;
+    @exec($command . ' 2>&1', $output, $returnVar);
+
+    // Clean up temp file
+    @unlink($tempHtmlFileWithExt);
+
+    // Check if rendering succeeded
+    if ($returnVar !== 0) {
+        return [
+            'success' => false,
+            'error' => 'wkhtmltoimage execution failed',
+            'return_code' => $returnVar,
+            'output' => implode("\n", $output),
+            'command' => $command
+        ];
+    }
+
+    // Verify output file was created
+    if (!file_exists($outputPath)) {
+        return [
+            'success' => false,
+            'error' => 'Output file was not created',
+            'output_path' => $outputPath
+        ];
+    }
+
+    // Get file info
+    $imageInfo = getimagesize($outputPath);
+    if ($imageInfo === false) {
+        return [
+            'success' => false,
+            'error' => 'Generated file is not a valid image',
+            'output_path' => $outputPath
+        ];
+    }
+
+    return [
+        'success' => true,
+        'engine' => 'wkhtmltoimage',
+        'output_path' => $outputPath,
+        'file_size' => filesize($outputPath),
+        'width' => $imageInfo[0],
+        'height' => $imageInfo[1],
+        'mime_type' => $imageInfo['mime'],
+        'command_used' => $command
+    ];
+}
+
+/**
+ * Convert HTML blocks to PNG image
+ *
+ * This is the main rendering function that automatically selects the best
+ * available rendering library and converts HTML to PNG.
+ *
+ * @param array $htmlBlocks Array of HTML content blocks
+ * @param string|null $cssContent Optional CSS content
+ * @param string $contentHash Hash for cache file naming
+ * @return array Result with success status and file path
+ */
+function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
+    // Get output directory
+    $outputDir = getOutputDirectory();
+    $outputPath = $outputDir . '/' . $contentHash . '.png';
+
+    // Check if file already exists (cache hit)
+    if (file_exists($outputPath)) {
+        return [
+            'success' => true,
+            'cached' => true,
+            'output_path' => $outputPath,
+            'file_size' => filesize($outputPath)
+        ];
+    }
+
+    // Detect available libraries
+    $detection = detectAvailableLibraries();
+    $bestLibrary = $detection['best_library'] ?? null;
+
+    if (!$bestLibrary) {
+        sendError(500, 'No rendering libraries available', [
+            'detected_libraries' => $detection
+        ]);
+    }
+
+    // Render using the best available library
+    $result = null;
+    switch ($bestLibrary) {
+        case 'wkhtmltoimage':
+            $result = renderWithWkHtmlToImage($htmlBlocks, $cssContent, $outputPath);
+            break;
+
+        case 'imagemagick':
+            // Will be implemented in feature #25
+            sendError(501, 'ImageMagick rendering not yet implemented', [
+                'library' => 'imagemagick'
+            ]);
+            break;
+
+        case 'gd':
+            // Will be implemented in feature #26
+            sendError(501, 'GD rendering not yet implemented', [
+                'library' => 'gd'
+            ]);
+            break;
+
+        default:
+            sendError(500, 'Unknown library selected', [
+                'library' => $bestLibrary
+            ]);
+    }
+
+    // Check if rendering succeeded
+    if (!$result['success']) {
+        sendError(500, 'Rendering failed', [
+            'library' => $bestLibrary,
+            'error' => $result['error'] ?? 'Unknown error',
+            'details' => $result
+        ]);
+    }
+
+    // Add cache flag for new renders
+    $result['cached'] = false;
+
+    return $result;
+}
+
+/**
  * Load CSS content from URL via cURL with caching
  *
  * @param string $cssUrl The CSS URL to load
@@ -613,6 +897,22 @@ if ($cssUrl !== null) {
 // Detect available rendering libraries
 $libraryDetection = detectAvailableLibraries();
 
+// Log the library selection for debugging
+$selectedLibrary = $libraryDetection['best_library'] ?? null;
+$selectionReason = '';
+if ($selectedLibrary) {
+    $priorityOrder = ['wkhtmltoimage' => 1, 'imagemagick' => 2, 'gd' => 3];
+    $priority = $priorityOrder[$selectedLibrary] ?? 0;
+    $selectionReason = sprintf(
+        'Selected based on priority (priority %d) - %s is the best available library',
+        $priority,
+        strtoupper($selectedLibrary)
+    );
+} else {
+    $selectionReason = 'No rendering libraries available - conversion will fail';
+}
+logLibrarySelection($selectedLibrary, $libraryDetection, $selectionReason);
+
 // Generate content hash from HTML and CSS
 $contentHash = generateContentHash($htmlBlocks, $cssContent);
 
@@ -657,6 +957,23 @@ if ($cssResult !== null) {
     $responseData['css_info'] = 'No CSS URL provided';
 }
 
-$responseData['note'] = 'Conversion logic will be implemented in subsequent features';
+// Convert HTML to PNG
+$renderResult = convertHtmlToPng($htmlBlocks, $cssContent, $contentHash);
 
-sendSuccess($responseData, 'RapidHTML2PNG API - Parameters accepted and CSS loaded');
+// Add rendering results to response
+$responseData['rendering'] = [
+    'engine' => $renderResult['engine'] ?? 'unknown',
+    'cached' => $renderResult['cached'] ?? false,
+    'output_file' => $renderResult['output_path'] ?? null,
+    'file_size' => $renderResult['file_size'] ?? null,
+    'width' => $renderResult['width'] ?? null,
+    'height' => $renderResult['height'] ?? null,
+    'mime_type' => $renderResult['mime_type'] ?? null
+];
+
+// Add command used for debugging (wkhtmltoimage only)
+if (isset($renderResult['command_used'])) {
+    $responseData['rendering']['command_used'] = $renderResult['command_used'];
+}
+
+sendSuccess($responseData, 'HTML converted to PNG successfully');
