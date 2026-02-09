@@ -56,3 +56,5 @@ e2e/.test-pro*
 only_development_example__only/
 mcp.*
 .mcp.*
+assets/media/rapidhtml2png/css_cache/
+test_feature_*.html
