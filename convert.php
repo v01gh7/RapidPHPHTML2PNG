@@ -204,7 +204,121 @@ function validateCssUrl($cssUrl) {
 }
 
 /**
- * Load CSS content from URL via cURL
+ * Get CSS cache directory path
+ *
+ * @return string Cache directory path
+ */
+function getCssCacheDir() {
+    $cacheDir = __DIR__ . '/assets/media/rapidhtml2png/css_cache';
+    if (!is_dir($cacheDir)) {
+        if (!mkdir($cacheDir, 0755, true)) {
+            sendError(500, 'Failed to create CSS cache directory', [
+                'cache_dir' => $cacheDir
+            ]);
+        }
+    }
+    return $cacheDir;
+}
+
+/**
+ * Get cached CSS file path for a URL
+ *
+ * @param string $cssUrl The CSS URL
+ * @return string Path to cached CSS file
+ */
+function getCssCachePath($cssUrl) {
+    $cacheDir = getCssCacheDir();
+    $cacheKey = md5($cssUrl);
+    return $cacheDir . '/' . $cacheKey . '.css';
+}
+
+/**
+ * Get CSS metadata file path for a URL
+ *
+ * @param string $cssUrl The CSS URL
+ * @return string Path to metadata file
+ */
+function getCssMetadataPath($cssUrl) {
+    $cacheDir = getCssCacheDir();
+    $cacheKey = md5($cssUrl);
+    return $cacheDir . '/' . $cacheKey . '.meta.json';
+}
+
+/**
+ * Save CSS metadata
+ *
+ * @param string $cssUrl The CSS URL
+ * @param string $etag Optional ETag from HTTP response
+ * @param int $lastModified Optional Last-Modified timestamp from HTTP response
+ * @return void
+ */
+function saveCssMetadata($cssUrl, $etag = null, $lastModified = null) {
+    $metadataPath = getCssMetadataPath($cssUrl);
+    $metadata = [
+        'url' => $cssUrl,
+        'cached_at' => time(),
+        'etag' => $etag,
+        'last_modified' => $lastModified
+    ];
+    file_put_contents($metadataPath, json_encode($metadata, JSON_PRETTY_PRINT));
+}
+
+/**
+ * Load CSS metadata
+ *
+ * @param string $cssUrl The CSS URL
+ * @return array|null Metadata or null if not found
+ */
+function loadCssMetadata($cssUrl) {
+    $metadataPath = getCssMetadataPath($cssUrl);
+    if (!file_exists($metadataPath)) {
+        return null;
+    }
+    $content = file_get_contents($metadataPath);
+    return json_decode($content, true);
+}
+
+/**
+ * Check if cached CSS is still valid using filemtime()
+ *
+ * @param string $cssUrl The CSS URL
+ * @return bool True if cache is valid and should be used
+ */
+function isCssCacheValid($cssUrl) {
+    $cachePath = getCssCachePath($cssUrl);
+
+    // Check if cached file exists
+    if (!file_exists($cachePath)) {
+        return false;
+    }
+
+    // Get file modification time of cached file
+    $cacheFilemtime = filemtime($cachePath);
+
+    // Load metadata to check when we last fetched from remote
+    $metadata = loadCssMetadata($cssUrl);
+    if ($metadata === null) {
+        // No metadata exists, cache is invalid
+        return false;
+    }
+
+    // For remote URLs, we can't check remote filemtime directly
+    // We use a cache TTL (time-to-live) approach
+    // Cache is valid for 1 hour (3600 seconds)
+    $cacheAge = time() - $cacheFilemtime;
+    $cacheTTL = 3600; // 1 hour
+
+    if ($cacheAge > $cacheTTL) {
+        // Cache is too old, needs refresh
+        return false;
+    }
+
+    // Cache is still valid
+    return true;
+}
+
+/**
+ * Load CSS content from URL via cURL with caching
  *
  * @param string $cssUrl The CSS URL to load
  * @return string CSS content
@@ -219,6 +333,23 @@ function loadCssContent($cssUrl) {
         ]);
     }
 
+    // Check if we have a valid cached version
+    if (isCssCacheValid($cssUrl)) {
+        $cachePath = getCssCachePath($cssUrl);
+        $cssContent = file_get_contents($cachePath);
+        $metadata = loadCssMetadata($cssUrl);
+
+        // Return cached content
+        return [
+            'content' => $cssContent,
+            'cached' => true,
+            'cache_filemtime' => filemtime($cachePath),
+            'cache_age' => time() - filemtime($cachePath),
+            'metadata' => $metadata
+        ];
+    }
+
+    // Need to fetch from remote URL
     // Initialize cURL
     $ch = curl_init($cssUrl);
     if ($ch === false) {
@@ -236,6 +367,18 @@ function loadCssContent($cssUrl) {
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_USERAGENT, 'RapidHTML2PNG/1.0');
+
+    // Request headers to get ETag and Last-Modified
+    $headers = [];
+    curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($curl, $header) use (&$headers) {
+        $len = strlen($header);
+        $header = explode(':', $header, 2);
+        if (count($header) < 2) {
+            return $len;
+        }
+        $headers[strtolower(trim($header[0]))][] = trim($header[1]);
+        return $len;
+    });
 
     // Execute cURL request
     $cssContent = curl_exec($ch);
@@ -272,7 +415,26 @@ function loadCssContent($cssUrl) {
         ]);
     }
 
-    return $cssContent;
+    // Extract ETag and Last-Modified from headers
+    $etag = $headers['etag'][0] ?? null;
+    $lastModified = isset($headers['last-modified'][0]) ? strtotime($headers['last-modified'][0]) : null;
+
+    // Save to cache
+    $cachePath = getCssCachePath($cssUrl);
+    file_put_contents($cachePath, $cssContent);
+
+    // Save metadata
+    saveCssMetadata($cssUrl, $etag, $lastModified);
+
+    // Return fresh content
+    return [
+        'content' => $cssContent,
+        'cached' => false,
+        'etag' => $etag,
+        'last_modified' => $lastModified,
+        'cache_file_path' => $cachePath,
+        'cache_filemtime' => filemtime($cachePath)
+    ];
 }
 
 // Parse input data
@@ -283,9 +445,9 @@ $htmlBlocks = validateHtmlBlocks($input['html_blocks'] ?? null);
 $cssUrl = validateCssUrl($input['css_url'] ?? null);
 
 // Load CSS content if URL is provided
-$cssContent = null;
+$cssResult = null;
 if ($cssUrl !== null) {
-    $cssContent = loadCssContent($cssUrl);
+    $cssResult = loadCssContent($cssUrl);
 }
 
 // Return successful parsing response (for now, until conversion is implemented)
@@ -299,10 +461,28 @@ $responseData = [
 ];
 
 // Include CSS content info if loaded
-if ($cssContent !== null) {
+if ($cssResult !== null) {
+    $cssContent = $cssResult['content'];
     $responseData['css_loaded'] = true;
     $responseData['css_content_length'] = strlen($cssContent);
     $responseData['css_preview'] = substr($cssContent, 0, 200) . (strlen($cssContent) > 200 ? '...' : '');
+    $responseData['css_cached'] = $cssResult['cached'];
+    $responseData['css_cache_filemtime'] = $cssResult['cache_filemtime'];
+    $responseData['css_cache_filemtime_formatted'] = date('Y-m-d H:i:s', $cssResult['cache_filemtime']);
+
+    if ($cssResult['cached']) {
+        $responseData['css_cache_age'] = $cssResult['cache_age'];
+        $responseData['css_cache_age_formatted'] = gmdate('H:i:s', $cssResult['cache_age']);
+    } else {
+        $responseData['css_fresh'] = true;
+        if (isset($cssResult['etag'])) {
+            $responseData['css_etag'] = $cssResult['etag'];
+        }
+        if (isset($cssResult['last_modified'])) {
+            $responseData['css_last_modified'] = date('Y-m-d H:i:s', $cssResult['last_modified']);
+        }
+        $responseData['css_cache_file_path'] = $cssResult['cache_file_path'];
+    }
 } else {
     $responseData['css_loaded'] = false;
     $responseData['css_info'] = 'No CSS URL provided';
