@@ -58,3 +58,4 @@ mcp.*
 .mcp.*
 assets/media/rapidhtml2png/css_cache/
 test_feature_*.html
+*.png
