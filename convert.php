@@ -225,7 +225,7 @@ function validateHtmlBlocks($htmlBlocks) {
         ]);
     }
 
-    // Validate each block is a non-empty string
+    // Validate each block is a non-empty string and sanitize
     foreach ($htmlBlocks as $index => $block) {
         if (!is_string($block)) {
             sendError(400, "html_blocks[$index] must be a string", [
@@ -237,6 +237,17 @@ function validateHtmlBlocks($htmlBlocks) {
         if (trim($block) === '') {
             sendError(400, "html_blocks[$index] cannot be empty", [
                 'invalid_index' => $index
+            ]);
+        }
+
+        // Sanitize HTML to prevent XSS attacks
+        $htmlBlocks[$index] = sanitizeHtmlInput($block);
+
+        // Check if sanitization removed all content
+        if (trim($htmlBlocks[$index]) === '') {
+            sendError(400, "html_blocks[$index] contained only dangerous/invalid HTML", [
+                'invalid_index' => $index,
+                'reason' => 'Sanitization removed all content'
             ]);
         }
     }
@@ -277,6 +288,85 @@ function validateCssUrl($cssUrl) {
     }
 
     return $cssUrl;
+}
+
+/**
+ * Sanitize HTML content to prevent XSS attacks
+ *
+ * This function removes potentially dangerous HTML elements and attributes
+ * that could be used for XSS attacks while preserving safe HTML structure
+ * needed for rendering.
+ *
+ * Security measures:
+ * - Removes <script> tags and their content
+ * - Removes event handler attributes (onclick, onload, etc.)
+ * - Removes javascript: URLs
+ * - Removes iframe, object, embed, form, input tags
+ * - Removes data attributes that could contain malicious code
+ * - Removes style attributes with javascript: or expression()
+ *
+ * @param string $html The HTML content to sanitize
+ * @return string Sanitized HTML content
+ */
+function sanitizeHtmlInput($html) {
+    // Remove script tags and their content
+    $html = preg_replace('#<script\b[^>]*>(.*?)</script>#is', '', $html);
+
+    // Remove iframe tags (often used for clickjacking)
+    $html = preg_replace('#<iframe\b[^>]*>.*?</iframe>#is', '', $html);
+
+    // Remove object tags
+    $html = preg_replace('#<object\b[^>]*>.*?</object>#is', '', $html);
+
+    // Remove embed tags
+    $html = preg_replace('#<embed\b[^>]*>#i', '', $html);
+
+    // Remove form and input tags
+    $html = preg_replace('#<form\b[^>]*>.*?</form>#is', '', $html);
+    $html = preg_replace('#<input\b[^>]*>#i', '', $html);
+    $html = preg_replace('#<button\b[^>]*>.*?</button>#is', '', $html);
+
+    // Remove dangerous event handler attributes from all tags
+    // This covers: onclick, onload, onerror, onmouseover, onmouseout, etc.
+    $dangerousEvents = [
+        'onabort', 'onactivate', 'onafterprint', 'onafterupdate', 'onbeforeactivate',
+        'onbeforecopy', 'onbeforecut', 'onbeforedeactivate', 'onbeforeeditfocus',
+        'onbeforepaste', 'onbeforeprint', 'onbeforeunload', 'onbeforeupdate',
+        'onblur', 'onbounce', 'oncellchange', 'onchange', 'onclick', 'oncontextmenu',
+        'oncontrolselect', 'oncopy', 'oncut', 'ondataavailable', 'ondatasetchanged',
+        'ondatasetcomplete', 'ondblclick', 'ondeactivate', 'ondrag', 'ondragend',
+        'ondragenter', 'ondragleave', 'ondragover', 'ondragstart', 'ondrop',
+        'onerror', 'onerrorupdate', 'onfilterchange', 'onfinish', 'onfocus',
+        'onfocusin', 'onfocusout', 'onhelp', 'onkeydown', 'onkeypress', 'onkeyup',
+        'onlayoutcomplete', 'onload', 'onlosecapture', 'onmousedown', 'onmouseenter',
+        'onmouseleave', 'onmousemove', 'onmouseout', 'onmouseover', 'onmouseup',
+        'onmousewheel', 'onmove', 'onmoveend', 'onmovestart', 'onpaste',
+        'onpropertychange', 'onreadystatechange', 'onreset', 'onresize',
+        'onresizeend', 'onresizestart', 'onrowenter', 'onrowexit', 'onrowsdelete',
+        'onrowsinserted', 'onscroll', 'onselect', 'onselectionchange', 'onselectstart',
+        'onstart', 'onstop', 'onsubmit', 'onunload'
+    ];
+
+    foreach ($dangerousEvents as $event) {
+        $html = preg_replace('#\s' . $event . '\s*=\s*(["\']).*?\1#is', '', $html);
+        $html = preg_replace('#\s' . $event . '\s*=\s*[^\s>]*#is', '', $html);
+    }
+
+    // Remove javascript: and vbscript: protocols from href and src attributes
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*(["\'])javascript:.*?\1#is', ' $1=""', $html);
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*["\']vbscript:.*?["\']#is', ' $1=""', $html);
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*["\']data:.*?["\']#is', ' $1=""', $html);
+
+    // Remove style attributes containing javascript: or expression()
+    $html = preg_replace('#\sstyle=\s*(["\'])(.*?javascript:.*?|.expression\(.*?\).*?)\1#is', '', $html);
+
+    // Remove data-* attributes that could contain malicious code (be conservative)
+    $html = preg_replace('#\sdata-[a-z-]+=\s*(["\']).*?\1#is', '', $html);
+
+    // Remove any remaining potential HTML comments with malicious content
+    $html = preg_replace('#<!--.*?-->#s', '', $html);
+
+    return trim($html);
 }
 
 /**
