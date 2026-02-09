@@ -353,12 +353,12 @@ function sanitizeHtmlInput($html) {
     }
 
     // Remove javascript: and vbscript: protocols from href and src attributes
-    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*(["\'])javascript:.*?\1#is', ' $1=""', $html);
-    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*["\']vbscript:.*?["\']#is', ' $1=""', $html);
-    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)=\s*["\']data:.*?["\']#is', ' $1=""', $html);
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)\s*=\s*(["\'])?\s*javascript:[^"\'>]*\2?#is', '', $html);
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)\s*=\s*(["\'])?\s*vbscript:[^"\'>]*\2?#is', '', $html);
+    $html = preg_replace('#\s(href|src|lowsrc|dynsrc|background)\s*=\s*(["\'])?\s*data:[^"\'>]*\2?#is', '', $html);
 
     // Remove style attributes containing javascript: or expression()
-    $html = preg_replace('#\sstyle=\s*(["\'])(.*?javascript:.*?|.expression\(.*?\).*?)\1#is', '', $html);
+    $html = preg_replace('#\sstyle\s*=\s*(["\'])(.*?(?:javascript:|expression\().*?)\1#is', '', $html);
 
     // Remove data-* attributes that could contain malicious code (be conservative)
     $html = preg_replace('#\sdata-[a-z-]+=\s*(["\']).*?\1#is', '', $html);
