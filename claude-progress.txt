@@ -1106,3 +1106,73 @@ The priority selection in detectAvailableLibraries() (lines 500-514 in convert.p
 - One remaining Library Detection feature: #23 (Library selection logging)
 - Then move to HTML Rendering features (8 features)
 
+
+## Session - 2026-02-09 (Feature #23)
+
+### Accomplished
+- **Feature #23**: Library Selection Logging ✅
+
+### Details
+- Verified `logLibrarySelection()` function implementation in convert.php (lines 54-103)
+- Verified `getLibraryLogPath()` function implementation (lines 38-43)
+- Confirmed logging is called on every API request at line 702
+- Log file location: logs/library_selection.log
+- Verified logs are created automatically when rendering operations are triggered
+
+### Tests Performed (10 total tests - all passed)
+
+**Standalone Shell Tests (10 tests):**
+1. ✅ Log file exists: logs/library_selection.log
+2. ✅ Log file is readable
+3. ✅ Log file is writable
+4. ✅ Log contains timestamp in format [YYYY-MM-DD HH:MM:SS]
+5. ✅ Log contains "Selected Library:" marker
+6. ✅ Log contains library name (GD)
+7. ✅ Log contains reason for selection
+8. ✅ Log contains detection results section
+9. ✅ Log shows both AVAILABLE and UNAVAILABLE statuses
+10. ✅ Log includes detailed information (version, capabilities)
+
+### Log Entry Format Verified
+```
+[2026-02-09 11:33:03] Selected Library: GD
+  Reason: Selected based on priority (priority 3) - GD is the best available library
+  Detection Results:
+    - WKHTMLTOIMAGE: UNAVAILABLE
+      Reason: Binary not found or not executable
+    - IMAGEMAGICK: UNAVAILABLE
+      Reason: Imagick extension not loaded
+    - GD: AVAILABLE
+      Info: {"GD Version":"bundled (2.1.0 compatible)",...}
+```
+
+### Feature Requirements Met
+1. ✅ Trigger a rendering operation: API calls trigger logging
+2. ✅ Check logs for library selection message: "Selected Library: GD" present
+3. ✅ Verify log includes library name: Shows "GD" clearly
+4. ✅ Verify log indicates why chosen: Shows priority-based reason
+5. ✅ Confirm log is helpful for debugging: Includes all detection results with details
+
+### Verification Checklist
+- ✅ Security: Log file in project directory, no sensitive info, proper permissions
+- ✅ Real Data: All logs from actual API calls with real library detection
+- ✅ Mock Data Grep: No mock patterns in convert.php logging functions
+- ✅ Server Restart: Logging is stateless, works across restarts
+- ✅ Integration: 0 console errors, proper file locking with LOCK_EX
+- ✅ Visual Verification: Screenshot shows log entries with all required info
+
+### Current Status
+- 22/46 features passing (47.8%)
+- Feature #23 marked as passing
+- Library Detection category: 5/5 passing (100%) ✅ **COMPLETE**
+
+### Files Created
+- test_feature_23_library_logging.php: PHP test suite (10 test cases)
+- test_feature_23_standalone.sh: Shell verification script
+- verify_feature_23_library_logging.md: Comprehensive verification documentation
+- feature_23_library_logging_test.png: Screenshot of browser test
+
+### Next Steps
+- Feature #23 complete and verified
+- **Library Detection category FULLY COMPLETE** 🎉 (5/5 features passing)
+- Ready for next category: HTML Rendering (8 features) or next assigned feature
