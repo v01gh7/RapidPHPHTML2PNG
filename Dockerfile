@@ -28,10 +28,10 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
 RUN a2enmod rewrite
 
 # Install wkhtmltoimage (optional - best quality rendering)
+# This is optional and may fail - the app will fall back to GD
 RUN wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.buster_amd64.deb \
-    && dpkg -i wkhtmltox_0.12.6.1-3.buster_amd64.deb || true \
-    && apt-get install -f -y \
-    && rm wkhtmltox_0.12.6.1-3.buster_amd64.deb
+    && dpkg -i wkhtmltox_0.12.6.1-3.buster_amd64.deb || apt-get install -f -y || true \
+    && (rm -f wkhtmltox_0.12.6.1-3.buster_amd64.deb || true) || true
 
 # Create output directory
 RUN mkdir -p /var/www/html/assets/media/rapidhtml2png \
