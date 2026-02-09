@@ -318,6 +318,39 @@ function isCssCacheValid($cssUrl) {
 }
 
 /**
+ * Generate MD5 hash from HTML and CSS content
+ *
+ * This function creates a unique hash based on the combined content
+ * of HTML blocks and CSS. The hash is used for cache file naming.
+ *
+ * @param array $htmlBlocks Array of HTML content blocks
+ * @param string|null $cssContent Optional CSS content string
+ * @return string 32-character hexadecimal MD5 hash
+ */
+function generateContentHash($htmlBlocks, $cssContent = null) {
+    // Combine all HTML blocks into a single string
+    $combinedContent = implode('', $htmlBlocks);
+
+    // Append CSS content if provided
+    if ($cssContent !== null && $cssContent !== '') {
+        $combinedContent .= $cssContent;
+    }
+
+    // Generate MD5 hash
+    $hash = md5($combinedContent);
+
+    // Verify the hash is valid (32 character hexadecimal string)
+    if (!preg_match('/^[a-f0-9]{32}$/', $hash)) {
+        sendError(500, 'Failed to generate valid MD5 hash', [
+            'generated_hash' => $hash,
+            'hash_length' => strlen($hash)
+        ]);
+    }
+
+    return $hash;
+}
+
+/**
  * Load CSS content from URL via cURL with caching
  *
  * @param string $cssUrl The CSS URL to load
@@ -446,9 +479,14 @@ $cssUrl = validateCssUrl($input['css_url'] ?? null);
 
 // Load CSS content if URL is provided
 $cssResult = null;
+$cssContent = null;
 if ($cssUrl !== null) {
     $cssResult = loadCssContent($cssUrl);
+    $cssContent = $cssResult['content'];
 }
+
+// Generate content hash from HTML and CSS
+$contentHash = generateContentHash($htmlBlocks, $cssContent);
 
 // Return successful parsing response (for now, until conversion is implemented)
 $responseData = [
@@ -457,12 +495,14 @@ $responseData = [
     'html_blocks_preview' => array_map(function($block) {
         return substr($block, 0, 100) . (strlen($block) > 100 ? '...' : '');
     }, $htmlBlocks),
-    'css_url' => $cssUrl
+    'css_url' => $cssUrl,
+    'content_hash' => $contentHash,
+    'hash_algorithm' => 'md5',
+    'hash_length' => strlen($contentHash)
 ];
 
 // Include CSS content info if loaded
 if ($cssResult !== null) {
-    $cssContent = $cssResult['content'];
     $responseData['css_loaded'] = true;
     $responseData['css_content_length'] = strlen($cssContent);
     $responseData['css_preview'] = substr($cssContent, 0, 200) . (strlen($cssContent) > 200 ? '...' : '');
