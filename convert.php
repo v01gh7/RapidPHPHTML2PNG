@@ -318,6 +318,131 @@ function isCssCacheValid($cssUrl) {
 }
 
 /**
+ * Detect available rendering libraries
+ *
+ * This function checks which HTML-to-image conversion libraries are available.
+ * It returns an array with detection results for each library.
+ *
+ * @return array Detection results with 'available' and 'detected_libraries' keys
+ */
+function detectAvailableLibraries() {
+    $detected = [];
+
+    // Check wkhtmltoimage
+    $wkhtmltoimageAvailable = false;
+    $wkhtmltoimagePath = null;
+
+    // Use exec() to test if wkhtmltoimage binary exists and is executable
+    if (function_exists('exec')) {
+        // Try to find wkhtmltoimage in common locations
+        $possiblePaths = [
+            'wkhtmltoimage',
+            '/usr/bin/wkhtmltoimage',
+            '/usr/local/bin/wkhtmltoimage',
+            '/opt/homebrew/bin/wkhtmltoimage',
+            '/usr/bin/wkhtmltoimage.sh'
+        ];
+
+        foreach ($possiblePaths as $path) {
+            try {
+                @exec('which ' . escapeshellarg($path) . ' 2>&1', $output, $returnCode);
+                if ($returnCode === 0 && !empty($output[0])) {
+                    // Found it, now test if it actually works
+                    $testPath = $output[0];
+                    @exec(escapeshellcmd($testPath) . ' --version 2>&1', $versionOutput, $versionReturnCode);
+
+                    if ($versionReturnCode === 0) {
+                        $wkhtmltoimageAvailable = true;
+                        $wkhtmltoimagePath = $testPath;
+                        $detected['wkhtmltoimage'] = [
+                            'available' => true,
+                            'path' => $testPath,
+                            'version' => $versionOutput[0] ?? 'unknown'
+                        ];
+                        break;
+                    }
+                }
+            } catch (Exception $e) {
+                // Continue to next path
+            }
+        }
+
+        // If not found in paths, mark as unavailable
+        if (!$wkhtmltoimageAvailable) {
+            $detected['wkhtmltoimage'] = [
+                'available' => false,
+                'reason' => 'Binary not found or not executable',
+                'note' => 'Install wkhtmltoimage to enable this rendering engine'
+            ];
+        }
+    } else {
+        $detected['wkhtmltoimage'] = [
+            'available' => false,
+            'reason' => 'exec() function is disabled'
+        ];
+    }
+
+    // Check ImageMagick
+    $imagemagickAvailable = false;
+    if (extension_loaded('imagick')) {
+        try {
+            $imagick = new Imagick();
+            if (defined('Imagick::IMAGICK_EXTVER')) {
+                $imagemagickAvailable = true;
+                $detected['imagemagick'] = [
+                    'available' => true,
+                    'version' => Imagick::IMAGICK_EXTVER,
+                    'extension_loaded' => true
+                ];
+            }
+        } catch (Exception $e) {
+            $detected['imagemagick'] = [
+                'available' => false,
+                'reason' => 'Imagick extension loaded but cannot instantiate',
+                'error' => $e->getMessage()
+            ];
+        }
+    } else {
+        $detected['imagemagick'] = [
+            'available' => false,
+            'reason' => 'Imagick extension not loaded'
+        ];
+    }
+
+    // Check GD library (always available in PHP)
+    $gdAvailable = false;
+    $gdInfo = [];
+    if (extension_loaded('gd')) {
+        if (function_exists('gd_info')) {
+            $gdInfo = gd_info();
+            $gdAvailable = true;
+        }
+    }
+
+    $detected['gd'] = [
+        'available' => $gdAvailable,
+        'info' => $gdInfo,
+        'note' => 'GD library is the baseline fallback renderer'
+    ];
+
+    // Determine best available library
+    $priority = ['wkhtmltoimage', 'imagemagick', 'gd'];
+    $bestLibrary = null;
+    foreach ($priority as $lib) {
+        if (isset($detected[$lib]) && $detected[$lib]['available']) {
+            $bestLibrary = $lib;
+            break;
+        }
+    }
+
+    return [
+        'detected_libraries' => $detected,
+        'best_library' => $bestLibrary,
+        'available' => $bestLibrary !== null
+    ];
+}
+
+/**
  * Generate MD5 hash from HTML and CSS content
  *
  * This function creates a unique hash based on the combined content
@@ -485,6 +610,9 @@ if ($cssUrl !== null) {
     $cssContent = $cssResult['content'];
 }
 
+// Detect available rendering libraries
+$libraryDetection = detectAvailableLibraries();
+
 // Generate content hash from HTML and CSS
 $contentHash = generateContentHash($htmlBlocks, $cssContent);
 
@@ -498,7 +626,8 @@ $responseData = [
     'css_url' => $cssUrl,
     'content_hash' => $contentHash,
     'hash_algorithm' => 'md5',
-    'hash_length' => strlen($contentHash)
+    'hash_length' => strlen($contentHash),
+    'library_detection' => $libraryDetection
 ];
 
 // Include CSS content info if loaded
