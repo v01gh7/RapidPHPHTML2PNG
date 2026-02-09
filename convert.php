@@ -796,6 +796,14 @@ function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
         $imagick->setImageAlphaChannel(Imagick::ALPHACHANNEL_ACTIVATE);
         $imagick->setBackgroundColor(new ImagickPixel('transparent'));
 
+        // Set PNG compression level for web-quality output
+        // PNG compression: 0 (none) to 9 (maximum)
+        // Level 6 provides good balance between file size and quality
+        $imagick->setImageCompression(Imagick::COMPRESSION_ZIP);
+        $imagick->setImageCompressionQuality(60); // 60 = PNG level 6 (0-99 scale)
+        $imagick->setOption('png:compression-level', '6');
+        $imagick->setOption('png:compression-strategy', 'filtered');
+
         // Write the image to file
         $imagick->writeImage($outputPath);
 
@@ -937,8 +945,10 @@ function renderWithGD($htmlBlocks, $cssContent, $outputPath) {
         $y += $fontHeight;
     }
 
-    // Save PNG with transparency
-    imagepng($image, $outputPath);
+    // Save PNG with web-quality compression
+    // Compression level: 0 (none) to 9 (maximum)
+    // Level 6 provides good balance between file size and quality for web use
+    imagepng($image, $outputPath, 6);
     imagedestroy($image);
 
     // Verify output file was created
