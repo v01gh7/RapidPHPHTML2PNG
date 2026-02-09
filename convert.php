@@ -203,6 +203,78 @@ function validateCssUrl($cssUrl) {
     return $cssUrl;
 }
 
+/**
+ * Load CSS content from URL via cURL
+ *
+ * @param string $cssUrl The CSS URL to load
+ * @return string CSS content
+ * @throws Exception If cURL request fails
+ */
+function loadCssContent($cssUrl) {
+    // Check if cURL is available
+    if (!extension_loaded('curl')) {
+        sendError(500, 'cURL extension is not available', [
+            'required_extension' => 'curl',
+            'css_url' => $cssUrl
+        ]);
+    }
+
+    // Initialize cURL
+    $ch = curl_init($cssUrl);
+    if ($ch === false) {
+        sendError(500, 'Failed to initialize cURL', [
+            'css_url' => $cssUrl
+        ]);
+    }
+
+    // Set cURL options
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'RapidHTML2PNG/1.0');
+
+    // Execute cURL request
+    $cssContent = curl_exec($ch);
+
+    // Check for errors
+    if ($cssContent === false) {
+        $error = curl_error($ch);
+        $errno = curl_errno($ch);
+        curl_close($ch);
+        sendError(500, 'Failed to load CSS file via cURL', [
+            'css_url' => $cssUrl,
+            'curl_error' => $error,
+            'curl_errno' => $errno
+        ]);
+    }
+
+    // Get HTTP status code
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // Check HTTP status code
+    if ($httpCode !== 200) {
+        sendError(500, 'CSS file returned non-200 status code', [
+            'css_url' => $cssUrl,
+            'http_code' => $httpCode
+        ]);
+    }
+
+    // Verify we got some content
+    if (empty($cssContent)) {
+        sendError(500, 'CSS file is empty or could not be read', [
+            'css_url' => $cssUrl,
+            'content_length' => strlen($cssContent)
+        ]);
+    }
+
+    return $cssContent;
+}
+
 // Parse input data
 $input = parseInput();
 
@@ -210,13 +282,32 @@ $input = parseInput();
 $htmlBlocks = validateHtmlBlocks($input['html_blocks'] ?? null);
 $cssUrl = validateCssUrl($input['css_url'] ?? null);
 
+// Load CSS content if URL is provided
+$cssContent = null;
+if ($cssUrl !== null) {
+    $cssContent = loadCssContent($cssUrl);
+}
+
 // Return successful parsing response (for now, until conversion is implemented)
-sendSuccess([
+$responseData = [
     'status' => 'Parameters validated successfully',
     'html_blocks_count' => count($htmlBlocks),
     'html_blocks_preview' => array_map(function($block) {
         return substr($block, 0, 100) . (strlen($block) > 100 ? '...' : '');
     }, $htmlBlocks),
-    'css_url' => $cssUrl,
-    'note' => 'Conversion logic will be implemented in subsequent features'
-], 'RapidHTML2PNG API - Parameters accepted');
+    'css_url' => $cssUrl
+];
+
+// Include CSS content info if loaded
+if ($cssContent !== null) {
+    $responseData['css_loaded'] = true;
+    $responseData['css_content_length'] = strlen($cssContent);
+    $responseData['css_preview'] = substr($cssContent, 0, 200) . (strlen($cssContent) > 200 ? '...' : '');
+} else {
+    $responseData['css_loaded'] = false;
+    $responseData['css_info'] = 'No CSS URL provided';
+}
+
+$responseData['note'] = 'Conversion logic will be implemented in subsequent features';
+
+sendSuccess($responseData, 'RapidHTML2PNG API - Parameters accepted and CSS loaded');
