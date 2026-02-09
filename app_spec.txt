@@ -1,0 +1,268 @@
+<project_specification>
+  <project_name>RapidHTML2PNG</project_name>
+
+  <overview>
+    PHP-скрипт для конвертации HTML блоков в PNG изображения с прозрачным фоном.
+    Принимает массив HTML блоков через POST API, применяет CSS стили, кеширует результаты.
+    Если хэш контента (HTML + CSS) изменился - пересоздаёт изображение, иначе возвращает кэш.
+    Работает на shared hosting (PHP 7.4+) с автоматическим определением доступных библиотек рендеринга.
+  </overview>
+
+  <technology_stack>
+    <frontend>
+      <framework>Нет (только PHP API)</framework>
+      <styling>Нет</styling>
+    </frontend>
+    <backend>
+      <runtime>PHP 7.4+</runtime>
+      <database>Нет (файловая система)</database>
+      <libraries>
+        - Автоопределение: wkhtmltoimage, ImageMagick,或其他可用ные библиотеки
+        - cURL для загрузки CSS
+        - GD для обработки изображений (baseline)
+      </libraries>
+    </backend>
+    <communication>
+      <api>REST API (POST)</api>
+      <input_format>multipart/form-data или JSON</input_format>
+      <output_format>JSON</output_format>
+    </communication>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - Docker контейнер с PHP 7.4 для разработки
+      - PHP расширения: curl, gd, mbstring
+      - Папка /assets/media/rapidhtml2png с правами записи
+      - Shared hosting с PHP 7.4+ для продакшна
+    </environment_setup>
+  </prerequisites>
+
+  <feature_count>35</feature_count>
+
+  <security_and_access_control>
+    <user_roles>
+      <role name="api_user">
+        <permissions>
+          - Может вызывать POST API для конвертации
+          - Может читать созданные PNG файлы
+          - Не может удалять файлы через API
+        </permissions>
+        <protected_routes>
+          - Нет открытого интерфейса, только API endpoint
+        </protected_routes>
+      </role>
+    </user_roles>
+    <authentication>
+      <method>Нет (внутренний скрипт для MODX)</method>
+      <session_timeout>Нет</session_timeout>
+    </authentication>
+    <sensitive_operations>
+      - Валидация входного HTML (предотвращение XSS)
+      - Ограничение размера входных данных
+      - Sanitизация путей к файлам
+    </sensitive_operations>
+  </security_and_access_control>
+
+  <core_features>
+    <Infrastructure (5 features)>
+      - Docker контейнер PHP 7.4 настроен и запускается
+      - PHP расширения (curl, gd, mbstring) доступны
+      - Папка /assets/media/rapidhtml2png создана с правами записи
+      - Тестовые файлы (test_html_to_render.html, main.css) присутствуют
+      - Скрипт доступен по HTTP и отвечает на POST запросы
+    </Infrastructure>
+
+    <API Endpoint (5 features)>
+      - POST endpoint принимает html_blocks[] и css_url параметры
+      - Валидация входных данных (проверка формата, ограничение размера)
+      - Парсинг multipart/form-data или JSON input
+      - Возврат JSON ответа с правильными Content-Type headers
+      - Обработка ошибок с HTTP кодами (400, 500, etc)
+    </API Endpoint>
+
+    <CSS Caching (4 features)>
+      - Загрузка CSS файла по URL через cURL
+      - Проверка filemtime() для определения изменения CSS
+      - Кеширование CSS контента в памяти/файле между запросами
+      - Валидация CSS URL и обработка ошибок загрузки
+    </CSS Caching>
+
+    <Hash Generation (3 features)>
+      - Генерация MD5 хэша из HTML + CSS контента
+      - Использование хэша для уникального имени файла
+      - Сравнение хэшей для определения необходимости перезаписи
+    </Hash Generation>
+
+    <Library Detection (5 features)>
+      - Проверка доступности wkhtmltoimage binary
+      - Проверка доступности ImageMagick extension
+      - Проверка доступности GD library (baseline fallback)
+      - Автоматический выбор лучшей доступной библиотеки
+      - Логирование используемой библиотеки для отладки
+    </Library Detection>
+
+    <HTML Rendering (8 features)>
+      - Рендеринг HTML в PNG через wkhtmltoimage (если доступен)
+      - Рендеринг HTML в PNG через ImageMagick (если доступен)
+      - Базовый рендер через GD (fallback)
+      - Применение CSS стилей к HTML перед рендерингом
+      - Установка прозрачного фона (без цветов)
+      - Автоматический размер на основе контента и стилей
+      - Обработка тегов, классов и структур из HTML
+      - Сохранение с качеством пригодным для веб
+    </HTML Rendering>
+
+    <File Operations (5 features)>
+      - Сохранение PNG в /assets/media/rapidhtml2png/{hash}.png
+      - Проверка существования файла перед созданием
+      - Перезапись если хэш изменился
+      - Возврат существующего файла если хэш тот же
+      - Обработка ошибок файловой системы
+    </File Operations>
+  </core_features>
+
+  <database_schema>
+    <tables>
+      <not_applicable>
+        - Используется файловая система
+        - Формат: /assets/media/rapidhtml2png/{md5_hash}.png
+        - Нет необходимости в базе данных
+      </not_applicable>
+    </tables>
+  </database_schema>
+
+  <api_endpoints_summary>
+    <Conversion>
+      - POST /convert.php (или другой путь)
+    </Conversion>
+  </api_endpoints_summary>
+
+  <ui_layout>
+    <not_applicable>
+      - Нет пользовательского интерфейса
+      - Только POST API endpoint
+    </not_applicable>
+  </ui_layout>
+
+  <design_system>
+    <not_applicable>
+      - Нет UI
+      - Генерирует PNG изображения
+    </not_applicable>
+  </design_system>
+
+  <implementation_steps>
+    <step number="1">
+      <title>Infrastructure Setup</title>
+      <tasks>
+        - Создать Dockerfile для PHP 7.4 с необходимыми расширениями
+        - Создать docker-compose.yml для контейнера
+        - Настроить volumes для папки проекта
+        - Установить зависимости: wkhtmltoimage (если возможно)
+        - Создать папку /assets/media/rapidhtml2png
+      </tasks>
+    </step>
+
+    <step number="2">
+      <title>Library Detection Module</title>
+      <tasks>
+        - Создать класс/функцию для проверки доступности библиотек
+        - Тестирование wkhtmltoimage (exec available)
+        - Тестирование ImageMagick (extension loaded)
+        - Тестирование GD (extension loaded)
+        - Вернуть приоритизированный список доступных библиотек
+      </tasks>
+    </step>
+
+    <step number="3">
+      <title>CSS Caching Module</title>
+      <tasks>
+        - Создать функцию загрузки CSS по URL
+        - Добавить проверку filemtime() для изменения файла
+        - Реализовать кеширование CSS контента
+        - Обработка ошибок загрузки (404, timeout)
+      </tasks>
+    </step>
+
+    <step number="4">
+      <title>Hash Generation</title>
+      <tasks>
+        - Создать функцию генерации MD5 хэша
+        - Объединение HTML + CSS контента
+        - Генерация уникального имени файла
+      </tasks>
+    </step>
+
+    <step number="5">
+      <title>Rendering Engines</title>
+      <tasks>
+        - Реализовать рендер через wkhtmltoimage (если доступен)
+        - Реализовать рендер через ImageMagick (если доступен)
+        - Реализовать базовый рендер через GD
+        - Обеспечить прозрачный фон во всех методах
+        - Применять CSS стили к HTML
+      </tasks>
+    </step>
+
+    <step number="6">
+      <title>API Endpoint</title>
+      <tasks>
+        - Создать основной PHP файл (convert.php или index.php)
+        - Обработка POST запроса
+        - Валидация входных данных
+        - Вызов модулей: CSS loading, hash generation, rendering
+        - Формирование JSON ответа
+      </tasks>
+    </step>
+
+    <step number="7">
+      <title>File Management</title>
+      <tasks>
+        - Сохранение PNG файлов с правильными правами
+        - Проверка существования файлов
+        - Логика перезаписи при изменении хэша
+        - Возврат путей к файлам
+      </tasks>
+    </step>
+
+    <step number="8">
+      <title>Testing</title>
+      <tasks>
+        - Конвертация test_html_to_render.html с main.css
+        - Проверка прозрачности фона на созданном PNG
+        - Проверка применения стилей (шрифты, цвета, размеры)
+        - Тест кеширования (повторный запрос с тем же HTML)
+        - Тест перезаписи (изменение CSS)
+      </tasks>
+    </step>
+  </implementation_steps>
+
+  <success_criteria>
+    <functionality>
+      - HTML блоки конвертируются в PNG с прозрачностью
+      - CSS стили корректно применяются к изображениям
+      - Кеширование работает: одинаковый контент не пересоздаётся
+      - При изменении CSS изображения обновляются
+      - API возвращает корректные JSON ответы
+      - Поддерживаются все основные HTML теги и CSS свойства
+    </functionality>
+    <user_experience>
+      - Простая интеграция с MODX (один POST запрос)
+      - Быстрая обработка запросов
+      - Понятные сообщения об ошибках
+    </user_experience>
+    <technical_quality>
+      - Код работает на PHP 7.4+
+      - Автоматическое определение доступных библиотек
+      - Graceful degradation при отсутствии оптимальных библиотек
+      - Безопасность: валидация входных данных, sanitization
+      - Обработка ошибок без fatal failures
+    </technical_quality>
+    <design_polish>
+      - Прозрачный фон без артефактов
+      - Качество изображений пригодное для продакшна
+      - Корректное отображение шрифтов и стилей
+    </design_polish>
+  </success_criteria>
+</project_specification>
