@@ -222,3 +222,61 @@ The convert.php endpoint:
 - Feature #10 complete and verified
 - API Endpoint category features: 3/5 passing (60%)
 - Remaining API features: #8 (css_url parameter parsing), #9 (multipart/form-data or JSON parsing)
+
+## Session 7 - 2026-02-09 (Feature #8)
+
+### Accomplished
+- **Feature #8**: Endpoint accepts css_url parameter ✅
+
+### Details
+- Verified the `validateCssUrl()` function correctly handles the css_url parameter
+- Confirmed URL validation works for various valid URL formats:
+  - http:// and https:// schemes
+  - URLs with query parameters (?v=1.2.3&theme=dark)
+  - URLs with port numbers (:8080)
+  - URLs with nested path segments
+  - URLs with fragment identifiers (#media-screen)
+  - URLs with authentication (user:pass@host)
+- Confirmed invalid URLs are properly rejected:
+  - Invalid schemes (ftp://) return 400 error
+  - Malformed URLs return 400 error
+- Verified css_url is optional:
+  - Empty string returns null
+  - Missing parameter returns null
+- Tested both JSON and form-urlencoded input formats
+
+### Tests Performed (12 total)
+1. ✅ Valid http CSS URL accepted and parsed
+2. ✅ Valid https CSS URL accepted
+3. ✅ CSS URL with query parameters preserved
+4. ✅ CSS URL with custom port accepted
+5. ✅ CSS URL with nested paths preserved
+6. ✅ Empty css_url handled gracefully (returns null)
+7. ✅ Missing css_url works (optional parameter)
+8. ✅ Invalid ftp:// URL rejected with 400 error
+9. ✅ Invalid URL format rejected with 400 error
+10. ✅ CSS URL with fragment identifier accepted
+11. ✅ Form-urlencoded POST with css_url works
+12. ✅ URL with authentication accepted
+
+### Implementation Verified
+The `validateCssUrl()` function (lines 171-204 in convert.php):
+- Returns null for empty/missing css_url (optional parameter)
+- Validates input is a string type
+- Uses filter_var(FILTER_VALIDATE_URL) for URL format validation
+- Enforces http/https scheme restriction only
+- Returns 400 errors with detailed messages for invalid URLs
+
+### Current Status
+- 8/46 features passing (17.4%)
+- Feature #8 marked as passing
+- API Endpoint category: 4/5 passing (80%)
+
+### Files Created
+- `test_feature_8_css_url.php`: Comprehensive test script (12 test cases)
+- `verify_feature_8_css_url.md`: Detailed verification documentation
+
+### Next Steps
+- Feature #8 complete and verified
+- One remaining API endpoint feature (#9: multipart/form-data or JSON parsing)
+- Then move to CSS Caching features
