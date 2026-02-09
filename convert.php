@@ -767,15 +767,21 @@ function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
         // Create a new image with transparent background
         $imagick->newImage(800, 100, new ImagickPixel('transparent'));
 
-        // Set up text rendering
-        $imagick->setFillColor(new ImagickPixel($fontColor));
-        $imagick->setFont('Arial');
-        $imagick->setFontSize($fontSize);
-        $imagick->setGravity(Imagick::GRAVITY_NORTHWEST);
+        // Create a draw object for text annotation
+        $draw = new ImagickDraw();
+        $draw->setFillColor(new ImagickPixel($fontColor));
+        // Try to set a font, but don't fail if it's not available
+        try {
+            $draw->setFont('DejaVu-Sans');
+        } catch (Exception $e) {
+            // Font not available, use default
+        }
+        $draw->setFontSize($fontSize);
+        $draw->setGravity(Imagick::GRAVITY_NORTHWEST);
 
         // Add text to image (with word wrapping)
         $text = wordwrap($text, 80, "\n", true);
-        $imagick->annotateImage(new ImagickDraw(), 10, 10, 0, $text);
+        $imagick->annotateImage($draw, 10, 10, 0, $text);
 
         // Trim image to content size
         $imagick->trimImage(0);

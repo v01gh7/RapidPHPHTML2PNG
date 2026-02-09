@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature #25: Comprehensive ImageMagick Test</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border-left: 4px solid;
+        }
+        .pass {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: #28a745;
+        }
+        .fail {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: #dc3545;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left-color: #17a2b8;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            border: 1px solid #dee2e6;
+            font-size: 12px;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+        .stat-box {
+            text-align: center;
+            padding: 20px;
+            background: #e9ecef;
+            border-radius: 8px;
+            flex: 1;
+            margin: 0 10px;
+        }
+        .stat-number {
+            font-size: 36px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        #outputImage {
+            max-width: 100%;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            margin-top: 10px;
+            background: repeating-conic-gradient(#f0f0f0 0% 25%, #ffffff 0% 50%) 50% / 20px 20px;
+        }
+        .progress {
+            width: 100%;
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #007bff, #0056b3);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🖼️ Feature #25: ImageMagick Rendering - Comprehensive Test</h1>
+
+    <div class="stats">
+        <div class="stat-box">
+            <div class="stat-number" id="totalTests">0</div>
+            <div class="stat-label">Total Tests</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-number" id="passedTests" style="color: #28a745;">0</div>
+            <div class="stat-label">Passed ✓</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-number" id="failedTests" style="color: #dc3545;">0</div>
+            <div class="stat-label">Failed ✗</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-number" id="passRate">0%</div>
+            <div class="stat-label">Pass Rate</div>
+        </div>
+    </div>
+
+    <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width: 0%">0%</div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="runAllTests()">▶️ Run All Tests</button>
+        <button onclick="clearResults()">🗑️ Clear Results</button>
+        <button onclick="window.location.reload()">🔄 Reload Page</button>
+    </div>
+
+    <div class="grid">
+        <div class="test-section">
+            <h2>Test Results</h2>
+            <div id="testResults"></div>
+        </div>
+        <div class="test-section">
+            <h2>Generated Image</h2>
+            <div id="imageContainer">
+                <p style="color: #6c757d;">Image will appear here after test...</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Full API Response</h2>
+        <pre id="apiResponse">Waiting for test...</pre>
+    </div>
+
+    <script>
+        let testCount = 0;
+        let passCount = 0;
+        let failCount = 0;
+
+        function addResult(type, title, message) {
+            const resultsDiv = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${type}`;
+
+            const icon = type === 'pass' ? '✓' : type === 'fail' ? '✗' : 'ℹ';
+            resultDiv.innerHTML = `<strong>${icon} ${title}</strong><br>${message}`;
+            resultsDiv.appendChild(resultDiv);
+
+            testCount++;
+            if (type === 'pass') passCount++;
+            if (type === 'fail') failCount++;
+
+            updateStats();
+        }
+
+        function updateStats() {
+            document.getElementById('totalTests').textContent = testCount;
+            document.getElementById('passedTests').textContent = passCount;
+            document.getElementById('failedTests').textContent = failCount;
+
+            const rate = testCount > 0 ? Math.round((passCount / testCount) * 100) : 0;
+            document.getElementById('passRate').textContent = rate + '%';
+            document.getElementById('progressBar').style.width = rate + '%';
+            document.getElementById('progressBar').textContent = rate + '%';
+        }
+
+        async function runAllTests() {
+            clearResults();
+            addResult('info', 'Starting Tests', 'Running comprehensive ImageMagick rendering tests...');
+
+            try {
+                // Test with specific text "IM_RENDER_TEST"
+                addResult('info', 'Test 1', 'Sending POST request with HTML containing "IM_RENDER_TEST"...');
+
+                // Build request with JSON (convert.php expects JSON)
+                const response = await fetch('convert.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        html_blocks: ['<div>IM_RENDER_TEST</div>']
+                    })
+                });
+
+                const responseText = await response.text();
+                document.getElementById('apiResponse').textContent = responseText;
+
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    addResult('fail', 'JSON Parse Error', `Response is not valid JSON: ${e.message}`);
+                    addResult('info', 'Raw Response', responseText.substring(0, 500));
+                    return;
+                }
+
+                // Test 2: Check if response is successful
+                if (data.success) {
+                    addResult('pass', 'Test 2', 'API request successful ✓');
+                } else {
+                    addResult('fail', 'Test 2', `API request failed: ${data.error}`);
+                    return;
+                }
+
+                // Test 3: Check if library_detection is present
+                if (data.library_detection) {
+                    addResult('pass', 'Test 3', 'library_detection field present in response ✓');
+                } else {
+                    addResult('fail', 'Test 3', 'library_detection field missing');
+                    return;
+                }
+
+                // Test 4: Check detected_libraries array
+                if (data.library_detection.detected_libraries) {
+                    addResult('pass', 'Test 4', 'detected_libraries array exists ✓');
+                } else {
+                    addResult('fail', 'Test 4', 'detected_libraries array missing');
+                    return;
+                }
+
+                // Test 5: Check if ImageMagick is in detected libraries
+                const hasImageMagick = data.library_detection.detected_libraries.imagemagick !== undefined;
+                if (hasImageMagick) {
+                    addResult('pass', 'Test 5', 'ImageMagick is in detected libraries ✓');
+
+                    const imAvailable = data.library_detection.detected_libraries.imagemagick.available;
+                    if (imAvailable) {
+                        addResult('pass', 'Test 5a', 'ImageMagick is AVAILABLE ✓');
+                        const version = data.library_detection.detected_libraries.imagemagick.version;
+                        if (version) {
+                            addResult('pass', 'Test 5b', `ImageMagick version: ${version}`);
+                        }
+                    } else {
+                        const reason = data.library_detection.detected_libraries.imagemagick.reason || 'Unknown';
+                        addResult('info', 'Test 5a', `ImageMagick NOT available: ${reason}`);
+                    }
+                } else {
+                    addResult('fail', 'Test 5', 'ImageMagick not in detected libraries');
+                }
+
+                // Test 6: Check if best_library is set
+                const bestLibrary = data.library_detection.best_library;
+                if (bestLibrary) {
+                    addResult('pass', 'Test 6', `Best library selected: ${bestLibrary} ✓`);
+
+                    if (bestLibrary === 'imagemagick') {
+                        addResult('pass', 'Test 6a', 'ImageMagick selected as best library ✓✓✓');
+                    } else {
+                        addResult('info', 'Test 6a', `Using ${bestLibrary} (ImageMagick not available or not selected)`);
+                    }
+                } else {
+                    addResult('fail', 'Test 6', 'No library selected');
+                }
+
+                // Test 7: Check rendering info
+                if (data.rendering) {
+                    addResult('pass', 'Test 7', 'rendering info exists ✓');
+
+                    const engine = data.rendering.engine;
+                    if (engine) {
+                        if (engine === 'imagemagick') {
+                            addResult('pass', 'Test 7a', `Rendering engine: ${engine} ✓✓✓`);
+                        } else {
+                            addResult('info', 'Test 7a', `Rendering engine: ${engine}`);
+                        }
+                    } else {
+                        addResult('fail', 'Test 7a', 'No rendering engine specified');
+                    }
+
+                    const cached = data.rendering.cached;
+                    if (cached !== undefined) {
+                        addResult('pass', 'Test 7b', `Cached: ${cached ? 'Yes' : 'No'}`);
+                    }
+                } else {
+                    addResult('fail', 'Test 7', 'rendering info missing');
+                }
+
+                // Test 8: Check output file
+                const outputFile = data.rendering?.output_file;
+                if (outputFile) {
+                    addResult('pass', 'Test 8', `Output file created: ${outputFile} ✓`);
+
+                    // Display the image
+                    const img = document.createElement('img');
+                    img.id = 'outputImage';
+                    img.src = outputFile + '?t=' + Date.now();
+                    img.alt = 'Generated PNG image';
+
+                    const container = document.getElementById('imageContainer');
+                    container.innerHTML = '';
+                    container.appendChild(img);
+
+                    // Load image to verify it works
+                    img.onload = () => {
+                        addResult('pass', 'Test 8a', `Image loaded: ${img.naturalWidth}x${img.naturalHeight} ✓`);
+                    };
+                    img.onerror = () => {
+                        addResult('fail', 'Test 8a', 'Failed to load image');
+                    };
+                } else {
+                    addResult('fail', 'Test 8', 'No output file specified');
+                }
+
+                // Test 9: Check image dimensions
+                const width = data.rendering?.width;
+                const height = data.rendering?.height;
+                if (width && height) {
+                    addResult('pass', 'Test 9', `Image dimensions: ${width}x${height} ✓`);
+                } else {
+                    addResult('fail', 'Test 9', 'Image dimensions missing');
+                }
+
+                // Test 10: Check file size
+                const fileSize = data.rendering?.file_size;
+                if (fileSize && fileSize > 0) {
+                    addResult('pass', 'Test 10', `File size: ${fileSize} bytes ✓`);
+                } else {
+                    addResult('fail', 'Test 10', 'Invalid file size');
+                }
+
+                // Test 11: Check MIME type
+                const mimeType = data.rendering?.mime_type;
+                if (mimeType === 'image/png') {
+                    addResult('pass', 'Test 11', `MIME type: ${mimeType} ✓`);
+                } else if (mimeType) {
+                    addResult('info', 'Test 11', `MIME type: ${mimeType} (expected image/png)`);
+                } else {
+                    addResult('fail', 'Test 11', 'MIME type missing');
+                }
+
+                // Test 12: Check content hash
+                const contentHash = data.content_hash;
+                if (contentHash) {
+                    addResult('pass', 'Test 12', `Content hash: ${contentHash} ✓`);
+                } else {
+                    addResult('fail', 'Test 12', 'Content hash missing');
+                }
+
+                // Final summary
+                setTimeout(() => {
+                    if (failCount === 0) {
+                        addResult('pass', '🎉 ALL TESTS PASSED!', `${passCount}/${testCount} tests passed successfully!`);
+                    } else {
+                        addResult('info', 'Tests Completed', `${passCount} passed, ${failCount} failed out of ${testCount} total`);
+                    }
+                }, 500);
+
+            } catch (error) {
+                addResult('fail', 'Error', `Request failed: ${error.message}`);
+                addResult('info', 'Error Details', error.toString());
+                document.getElementById('apiResponse').textContent = error.toString();
+            }
+        }
+
+        function clearResults() {
+            document.getElementById('testResults').innerHTML = '';
+            document.getElementById('apiResponse').textContent = 'Waiting for test...';
+            document.getElementById('imageContainer').innerHTML = '<p style="color: #6c757d;">Image will appear here after test...</p>';
+            testCount = 0;
+            passCount = 0;
+            failCount = 0;
+            updateStats();
+        }
+
+        // Auto-run on page load
+        window.addEventListener('load', () => {
+            setTimeout(runAllTests, 1000);
+        });
+    </script>
+</body>
+</html>

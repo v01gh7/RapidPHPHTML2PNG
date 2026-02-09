@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><title>Minimal Test</title></head>
+<body>
+<h1>Feature #28 Minimal Test</h1>
+<button onclick="test()">Test Rendering</button>
+<pre id="result"></pre>
+
+<script>
+async function test() {
+    const resultEl = document.getElementById('result');
+    resultEl.textContent = 'Testing...';
+
+    try {
+        const formData = new FormData();
+        formData.append('html_blocks[0]', '<div style="color:red; font-size:24px;">TEST</div>');
+
+        const response = await fetch('/convert.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        resultEl.textContent = 'Status: ' + response.status + '\n';
+
+        const text = await response.text();
+        resultEl.textContent += 'Response length: ' + text.length + '\n';
+        resultEl.textContent += 'Response:\n' + text.substring(0, 500) + '\n';
+
+        if (response.ok) {
+            const data = JSON.parse(text);
+            resultEl.textContent += '\nSuccess!\n';
+            resultEl.textContent += 'Engine: ' + data.data.rendering.engine + '\n';
+            resultEl.textContent += 'Output: ' + data.data.rendering.output_file + '\n';
+        }
+    } catch (e) {
+        resultEl.textContent += '\nError: ' + e.message + '\n';
+    }
+}
+</script>
+</body>
+</html>
