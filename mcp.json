@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "ctx7sk-b76aaccc-f3bc-4d32-adbb-8f719775007c"
+      }
+    },    
+    "web-search": {
+      "command": "npx",
+      "args": [
+        "--no-install",
+        "node",
+        "D:/_DEV_/AI/MCPSearchEngine/dist/index.js"
+      ],
+      "env": {
+        "MAX_CONTENT_LENGTH": "100000",
+        "BROWSER_HEADLESS": "true",
+        "MAX_BROWSERS": "3",
+        "BROWSER_FALLBACK_THRESHOLD": "3"
+      }
+    }
+
+
+}
