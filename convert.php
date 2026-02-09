@@ -120,7 +120,9 @@ function sendError($code, $message, $data = null) {
         $response['data'] = $data;
     }
     echo json_encode($response, JSON_PRETTY_PRINT);
-    exit;
+    if (!defined('TEST_MODE')) {
+        exit;
+    }
 }
 
 /**
@@ -140,11 +142,13 @@ function sendSuccess($data = null, $message = 'OK') {
         $response['data'] = $data;
     }
     echo json_encode($response, JSON_PRETTY_PRINT);
-    exit;
+    if (!defined('TEST_MODE')) {
+        exit;
+    }
 }
 
-// Only allow POST requests for actual conversion
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+// Only allow POST requests for actual conversion (unless in test mode)
+if (!defined('TEST_MODE') && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     sendError(405, 'Method Not Allowed', [
         'allowed_methods' => ['POST'],
         'endpoint' => '/convert.php',
