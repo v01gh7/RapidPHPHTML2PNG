@@ -24,6 +24,11 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
+// Input size limits (in bytes)
+define('MAX_HTML_BLOCK_SIZE', 1048576); // 1MB per HTML block
+define('MAX_TOTAL_INPUT_SIZE', 5242880); // 5MB total input size
+define('MAX_CSS_SIZE', 1048576); // 1MB for CSS content
+
 // Handle OPTIONS preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -190,6 +195,24 @@ function parseInput() {
 }
 
 /**
+ * Check total input size from request body
+ *
+ * @return void Sends error if size exceeds limit
+ */
+function checkTotalInputSize() {
+    $contentLength = $_SERVER['CONTENT_LENGTH'] ?? 0;
+
+    if ($contentLength > MAX_TOTAL_INPUT_SIZE) {
+        sendError(413, 'Request body too large', [
+            'content_length' => $contentLength,
+            'max_allowed' => MAX_TOTAL_INPUT_SIZE,
+            'max_allowed_mb' => round(MAX_TOTAL_INPUT_SIZE / 1048576, 2),
+            'exceeded_by' => $contentLength - MAX_TOTAL_INPUT_SIZE
+        ]);
+    }
+}
+
+/**
  * Validate HTML blocks input
  *
  * @param mixed $htmlBlocks The html_blocks parameter to validate
@@ -231,6 +254,18 @@ function validateHtmlBlocks($htmlBlocks) {
             sendError(400, "html_blocks[$index] must be a string", [
                 'invalid_index' => $index,
                 'received_type' => gettype($block)
+            ]);
+        }
+
+        // Check individual block size
+        $blockSize = strlen($block);
+        if ($blockSize > MAX_HTML_BLOCK_SIZE) {
+            sendError(413, "html_blocks[$index] exceeds maximum size", [
+                'invalid_index' => $index,
+                'block_size' => $blockSize,
+                'max_allowed_size' => MAX_HTML_BLOCK_SIZE,
+                'max_allowed_mb' => round(MAX_HTML_BLOCK_SIZE / 1048576, 2),
+                'exceeded_by' => $blockSize - MAX_HTML_BLOCK_SIZE
             ]);
         }
 
@@ -1347,6 +1382,18 @@ function loadCssContent($cssUrl) {
         ]);
     }
 
+    // Check CSS content size
+    $cssSize = strlen($cssContent);
+    if ($cssSize > MAX_CSS_SIZE) {
+        sendError(413, 'CSS file exceeds maximum size', [
+            'css_url' => $cssUrl,
+            'css_size' => $cssSize,
+            'max_allowed_size' => MAX_CSS_SIZE,
+            'max_allowed_mb' => round(MAX_CSS_SIZE / 1048576, 2),
+            'exceeded_by' => $cssSize - MAX_CSS_SIZE
+        ]);
+    }
+
     // Extract ETag and Last-Modified from headers
     $etag = $headers['etag'][0] ?? null;
     $lastModified = isset($headers['last-modified'][0]) ? strtotime($headers['last-modified'][0]) : null;
@@ -1368,6 +1415,9 @@ function loadCssContent($cssUrl) {
         'cache_filemtime' => filemtime($cachePath)
     ];
 }
+
+// Check total input size before parsing
+checkTotalInputSize();
 
 // Parse input data
 $input = parseInput();
