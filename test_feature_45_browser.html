@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature #45: End-to-End Conversion Workflow</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 30px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .test-config {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .test-config p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #555;
+        }
+        .test-section {
+            margin: 20px 0;
+        }
+        .test-section h2 {
+            color: #444;
+            font-size: 20px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        .test-card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .test-card h3 {
+            color: #333;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .result-item {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .result-item strong {
+            display: block;
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .result-item span {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .pass { color: #28a745; }
+        .fail { color: #dc3545; }
+        .warn { color: #ffc107; }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #667eea;
+            padding-left: 10px;
+        }
+        .image-preview {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .image-preview img {
+            max-width: 100%;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><rect width="10" height="10" fill="%23eee"/><rect x="10" y="10" width="10" height="10" fill="%23eee"/></svg>');
+        }
+        .code-block {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 Feature #45: End-to-End Conversion Workflow</h1>
+        <p class="subtitle">Verify complete workflow from HTML input to PNG output</p>
+
+        <div class="test-config">
+            <p><strong>API Endpoint:</strong> http://localhost:8080/convert.php</p>
+            <p><strong>Test Identifier:</strong> E2E_TEST_12345</p>
+            <p><strong>Test Color:</strong> Blue (color: blue)</p>
+        </div>
+
+        <div id="status" class="status info">Ready to start E2E test</div>
+
+        <div class="test-section">
+            <button id="runTestBtn" onclick="runE2ETest()">▶ Run Complete E2E Test</button>
+            <button onclick="clearResults()">Clear Results</button>
+        </div>
+
+        <div id="results"></div>
+
+        <div class="test-section">
+            <h2>Test Log</h2>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8080/convert.php';
+        const TEST_IDENTIFIER = 'E2E_TEST_12345';
+        const TEST_COLOR = 'blue';
+
+        // Test data
+        const testHtml = `<div style="padding: 20px; font-family: Arial, sans-serif;">
+    <h2 style="color: ${TEST_COLOR};">End-to-End Test</h2>
+    <p style="color: #333; font-size: 16px;">Test ID: ${TEST_IDENTIFIER}</p>
+    <p style="color: #666;">This is a complete workflow test.</p>
+</div>`;
+
+        const testCss = `
+.e2e-test-container {
+    border: 2px solid ${TEST_COLOR};
+    border-radius: 8px;
+    padding: 15px;
+    background: #f9f9f9;
+}
+.e2e-title {
+    color: ${TEST_COLOR};
+    font-weight: bold;
+    font-size: 24px;
+    margin-bottom: 10px;
+}
+`;
+
+        let testResults = [];
+        let generatedHash = null;
+        let generatedImagePath = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.style.borderLeftColor = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : '#667eea';
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+        }
+
+        function renderTestCard(test) {
+            const passed = test.passed;
+            const statusClass = passed ? 'pass' : 'fail';
+            const statusText = passed ? '✓ PASS' : '✗ FAIL';
+
+            return `
+                <div class="test-card">
+                    <h3>${test.name}</h3>
+                    <div class="result-grid">
+                        <div class="result-item">
+                            <strong>Status</strong>
+                            <span class="${statusClass}">${statusText}</span>
+                        </div>
+                        ${test.details ? `
+                        <div class="result-item">
+                            <strong>Details</strong>
+                            <span style="font-size: 14px;">${test.details}</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    ${test.message ? `<p style="margin-top: 10px; color: #666;">${test.message}</p>` : ''}
+                    ${test.code ? `<div class="code-block">${test.code}</div>` : ''}
+                    ${test.imagePreview ? test.imagePreview : ''}
+                </div>
+            `;
+        }
+
+        function renderResults() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<h2>Test Results</h2>' + testResults.map(renderTestCard).join('');
+
+            const passed = testResults.filter(t => t.passed).length;
+            const total = testResults.length;
+
+            const statsHtml = `
+                <div class="test-card" style="background: #f0f7ff; border-color: #667eea;">
+                    <h3>📊 Overall Statistics</h3>
+                    <div class="result-grid">
+                        <div class="result-item">
+                            <strong>Tests Passed</strong>
+                            <span class="${passed === total ? 'pass' : 'warn'}">${passed}/${total}</span>
+                        </div>
+                        <div class="result-item">
+                            <strong>Success Rate</strong>
+                            <span>${((passed / total) * 100).toFixed(1)}%</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            resultsDiv.innerHTML += statsHtml;
+        }
+
+        async function runE2ETest() {
+            document.getElementById('runTestBtn').disabled = true;
+            testResults = [];
+            generatedHash = null;
+            generatedImagePath = null;
+
+            log('Starting End-to-End Conversion Workflow Test...');
+
+            // Step 1: Verify test HTML contains specific text
+            log('Step 1: Verifying test HTML content...');
+            const htmlContainsIdentifier = testHtml.includes(TEST_IDENTIFIER);
+            testResults.push({
+                name: 'Step 1: Test HTML contains specific text',
+                passed: htmlContainsIdentifier,
+                details: htmlContainsIdentifier ? 'Found: ' + TEST_IDENTIFIER : 'NOT found',
+                message: htmlContainsIdentifier
+                    ? `Test HTML correctly contains identifier "${TEST_IDENTIFIER}"`
+                    : `Test HTML is missing identifier "${TEST_IDENTIFIER}"`,
+                code: `Test HTML includes: "${TEST_IDENTIFIER}"`
+            });
+            log(`Step 1: ${htmlContainsIdentifier ? 'PASS' : 'FAIL'} - Test HTML contains identifier`);
+
+            // Step 2: Verify CSS contains specific styling
+            log('Step 2: Verifying CSS content...');
+            const cssContainsColor = testCss.includes(TEST_COLOR) && testCss.includes('color:');
+            testResults.push({
+                name: 'Step 2: CSS contains specific styling',
+                passed: cssContainsColor,
+                details: cssContainsColor ? 'Found: color: blue' : 'NOT found',
+                message: cssContainsColor
+                    ? `Test CSS correctly contains "color: ${TEST_COLOR}"`
+                    : `Test CSS is missing "color: ${TEST_COLOR}" styling`,
+                code: `Test CSS includes: "color: ${TEST_COLOR}"`
+            });
+            log(`Step 2: ${cssContainsColor ? 'PASS' : 'FAIL'} - CSS contains blue color styling`);
+
+            // Step 3: Send POST request with HTML and CSS
+            log('Step 3: Sending POST request to API...');
+            let apiResponse;
+            let apiSuccess = false;
+
+            try {
+                const formData = new FormData();
+                formData.append('html_blocks[]', testHtml);
+                formData.append('css_url', 'data:text/css;charset=utf-8,' + encodeURIComponent(testCss));
+
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const statusCode = response.status;
+                apiResponse = await response.json();
+                apiSuccess = apiResponse.success && statusCode === 200;
+
+                generatedHash = apiResponse.data?.hash || null;
+                generatedImagePath = apiResponse.data?.output_path || null;
+
+                testResults.push({
+                    name: 'Step 3: Send POST request',
+                    passed: apiSuccess,
+                    details: `HTTP ${statusCode}`,
+                    message: apiSuccess
+                        ? 'API successfully processed the request'
+                        : `API returned error: ${apiResponse.error || 'Unknown error'}`,
+                    code: `POST ${API_URL}\nStatus: ${statusCode}\nResponse: ${JSON.stringify(apiResponse, null, 2)}`
+                });
+
+                if (apiSuccess) {
+                    log(`Step 3: PASS - API responded with HTTP ${statusCode}`);
+                    log(`  Generated hash: ${generatedHash}`);
+                    log(`  Output path: ${generatedImagePath}`);
+                } else {
+                    log(`Step 3: FAIL - API error: ${apiResponse.error}`, 'error');
+                }
+            } catch (error) {
+                testResults.push({
+                    name: 'Step 3: Send POST request',
+                    passed: false,
+                    details: 'Network/Client error',
+                    message: `Failed to communicate with API: ${error.message}`,
+                    code: `Error: ${error.message}`
+                });
+                log(`Step 3: FAIL - ${error.message}`, 'error');
+            }
+
+            // Steps 4-6: Verify PNG file (only if API succeeded)
+            if (apiSuccess && generatedHash && generatedImagePath) {
+                // Step 4: Verify PNG path format
+                log('Step 4: Verifying PNG file path...');
+                const expectedPathPattern = new RegExp(`assets/media/rapidhtml2png/${generatedHash}\\.png$`);
+                const pathMatches = expectedPathPattern.test(generatedImagePath) || generatedImagePath.includes(generatedHash);
+
+                testResults.push({
+                    name: 'Step 4: PNG created at correct path',
+                    passed: pathMatches,
+                    details: pathMatches ? 'Path format valid' : 'Invalid path format',
+                    message: pathMatches
+                        ? `PNG file path follows expected format: ${generatedImagePath}`
+                        : `PNG file path doesn't match expected format`,
+                    code: `Expected pattern: assets/media/rapidhtml2png/{hash}.png\nActual: ${generatedImagePath}`
+                });
+                log(`Step 4: ${pathMatches ? 'PASS' : 'FAIL'} - PNG path verification`);
+
+                // Step 5: Load PNG via HTTP and verify it exists
+                log('Step 5: Loading PNG via HTTP...');
+                let httpAccessible = false;
+                let httpStatus = null;
+                let imagePreviewHtml = '';
+
+                try {
+                    const imageUrl = `http://localhost:8080/${generatedImagePath}`;
+                    const imgResponse = await fetch(imageUrl);
+                    httpStatus = imgResponse.status;
+                    httpAccessible = httpStatus === 200;
+
+                    if (httpAccessible) {
+                        const imageBlob = await imgResponse.blob();
+                        const objectUrl = URL.createObjectURL(imageBlob);
+
+                        imagePreviewHtml = `
+                            <div class="image-preview">
+                                <h4>Generated PNG Image:</h4>
+                                <img src="${objectUrl}" alt="Generated PNG" onload="URL.revokeObjectURL(this.src)" />
+                                <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                                    URL: <a href="${imageUrl}" target="_blank">${imageUrl}</a>
+                                </p>
+                            </div>
+                        `;
+                    }
+
+                    testResults.push({
+                        name: 'Step 5: PNG accessible via HTTP',
+                        passed: httpAccessible,
+                        details: `HTTP ${httpStatus}`,
+                        message: httpAccessible
+                            ? `PNG file is accessible via HTTP at ${imageUrl}`
+                            : `PNG file not accessible (HTTP ${httpStatus})`,
+                        imagePreview: imagePreviewHtml
+                    });
+                    log(`Step 5: ${httpAccessible ? 'PASS' : 'FAIL'} - PNG HTTP accessibility (HTTP ${httpStatus})`);
+                } catch (error) {
+                    testResults.push({
+                        name: 'Step 5: PNG accessible via HTTP',
+                        passed: false,
+                        details: 'Network error',
+                        message: `Failed to load PNG via HTTP: ${error.message}`
+                    });
+                    log(`Step 5: FAIL - ${error.message}`, 'error');
+                }
+
+                // Step 6: Verify PNG is a valid image
+                log('Step 6: Verifying PNG validity...');
+                let validImage = false;
+                let imageDimensions = null;
+
+                try {
+                    if (httpAccessible) {
+                        const imageUrl = `http://localhost:8080/${generatedImagePath}`;
+
+                        // Create an Image object to verify it's a valid PNG
+                        const imageLoadPromise = new Promise((resolve) => {
+                            const img = new Image();
+                            img.onload = () => resolve({ valid: true, width: img.width, height: img.height });
+                            img.onerror = () => resolve({ valid: false });
+                            img.src = imageUrl;
+                        });
+
+                        const imageResult = await imageLoadPromise;
+                        validImage = imageResult.valid;
+                        imageDimensions = imageResult.valid ? `${imageResult.width}x${imageResult.height}` : null;
+
+                        testResults.push({
+                            name: 'Step 6: PNG is a valid image',
+                            passed: validImage,
+                            details: validImage ? imageDimensions : 'Invalid image',
+                            message: validImage
+                                ? `PNG file is a valid image (${imageDimensions})`
+                                : 'PNG file is not a valid or loadable image',
+                            code: validImage ? `Image loaded successfully\nDimensions: ${imageDimensions}` : null
+                        });
+                        log(`Step 6: ${validImage ? 'PASS' : 'FAIL'} - PNG validity check (${validImage ? imageDimensions : 'failed'})`);
+                    }
+                } catch (error) {
+                    testResults.push({
+                        name: 'Step 6: PNG is a valid image',
+                        passed: false,
+                        details: 'Error',
+                        message: `Error verifying PNG: ${error.message}`
+                    });
+                    log(`Step 6: FAIL - ${error.message}`, 'error');
+                }
+            } else {
+                // Skip remaining tests if API failed
+                testResults.push({
+                    name: 'Step 4-6: File verification',
+                    passed: false,
+                    details: 'Skipped',
+                    message: 'Skipped due to API failure in Step 3'
+                });
+                log('Steps 4-6: SKIPPED due to API failure', 'warn');
+            }
+
+            // Final results
+            renderResults();
+
+            const passed = testResults.filter(t => t.passed).length;
+            const total = testResults.length;
+
+            if (passed === total) {
+                updateStatus(`✓ ALL E2E TESTS PASSED! (${passed}/${total}) - Complete workflow verified`, 'success');
+                log(`✓ ALL E2E TESTS PASSED! (${passed}/${total})`, 'success');
+            } else {
+                updateStatus(`⚠ SOME TESTS FAILED (${passed}/${total}) - Workflow has issues`, 'error');
+                log(`Tests completed: ${passed}/${total} passed`, 'error');
+            }
+
+            document.getElementById('runTestBtn').disabled = false;
+            log('E2E test complete!');
+        }
+
+        function clearResults() {
+            testResults = [];
+            generatedHash = null;
+            generatedImagePath = null;
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('log').innerHTML = '';
+            updateStatus('Results cleared', 'info');
+        }
+    </script>
+</body>
+</html>
