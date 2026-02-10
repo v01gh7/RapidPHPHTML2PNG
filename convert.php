@@ -592,42 +592,98 @@ function loadCssMetadata($cssUrl) {
 }
 
 /**
- * Check if cached CSS is still valid using filemtime()
+ * Check if cached CSS is still valid using conditional HTTP request
+ *
+ * This function makes a conditional HTTP request (HEAD or GET with If-None-Match/If-Modified-Since)
+ * to check if the cached CSS is still fresh without downloading the entire file.
  *
  * @param string $cssUrl The CSS URL
- * @return bool True if cache is valid and should be used
+ * @return array Result with 'valid' bool and 'should_refresh' bool
  */
-function isCssCacheValid($cssUrl) {
+function checkCssCacheFreshness($cssUrl) {
     $cachePath = getCssCachePath($cssUrl);
 
     // Check if cached file exists
     if (!file_exists($cachePath)) {
-        return false;
+        return ['valid' => false, 'should_refresh' => true];
     }
 
-    // Get file modification time of cached file
-    $cacheFilemtime = filemtime($cachePath);
-
-    // Load metadata to check when we last fetched from remote
+    // Load metadata to get ETag and Last-Modified
     $metadata = loadCssMetadata($cssUrl);
     if ($metadata === null) {
         // No metadata exists, cache is invalid
-        return false;
+        return ['valid' => false, 'should_refresh' => true];
     }
 
-    // For remote URLs, we can't check remote filemtime directly
-    // We use a cache TTL (time-to-live) approach
-    // Cache is valid for 1 hour (3600 seconds)
-    $cacheAge = time() - $cacheFilemtime;
-    $cacheTTL = 3600; // 1 hour
-
-    if ($cacheAge > $cacheTTL) {
-        // Cache is too old, needs refresh
-        return false;
+    // Check if cURL is available
+    if (!extension_loaded('curl')) {
+        // Can't check, use TTL fallback
+        $cacheFilemtime = filemtime($cachePath);
+        $cacheAge = time() - $cacheFilemtime;
+        $cacheTTL = 3600; // 1 hour
+        return [
+            'valid' => $cacheAge <= $cacheTTL,
+            'should_refresh' => $cacheAge > $cacheTTL,
+            'method' => 'ttl_fallback'
+        ];
     }
 
-    // Cache is still valid
-    return true;
+    // Make conditional HTTP request to check if CSS has changed
+    $ch = curl_init($cssUrl);
+    if ($ch === false) {
+        // cURL init failed, use TTL fallback
+        $cacheFilemtime = filemtime($cachePath);
+        $cacheAge = time() - $cacheFilemtime;
+        $cacheTTL = 3600;
+        return [
+            'valid' => $cacheAge <= $cacheTTL,
+            'should_refresh' => $cacheAge > $cacheTTL,
+            'method' => 'ttl_fallback'
+        ];
+    }
+
+    // Set cURL options for conditional request
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'RapidHTML2PNG/1.0');
+    curl_setopt($ch, CURLOPT_NOBODY, true); // HEAD request
+
+    // Add conditional headers if we have ETag or Last-Modified
+    $headers = [];
+    if (!empty($metadata['etag'])) {
+        $headers[] = 'If-None-Match: ' . $metadata['etag'];
+    }
+    if (!empty($metadata['last_modified'])) {
+        $headers[] = 'If-Modified-Since: ' . gmdate('D, d M Y H:i:s T', $metadata['last_modified']) . ' GMT';
+    }
+    if (!empty($headers)) {
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    }
+
+    // Execute conditional request
+    curl_exec($ch);
+
+    // Get HTTP status code
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // HTTP 304 = Not Modified (cache is still valid)
+    // HTTP 200 = OK (CSS has changed, we should refresh)
+    // HTTP 4xx/5xx = Error (use cache as fallback)
+    $cacheValid = ($httpCode === 304);
+    $shouldRefresh = ($httpCode === 200);
+
+    return [
+        'valid' => $cacheValid,
+        'should_refresh' => $shouldRefresh,
+        'http_code' => $httpCode,
+        'method' => 'conditional_request'
+    ];
 }
 
 /**
@@ -1397,7 +1453,11 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
 }
 
 /**
- * Load CSS content from URL via cURL with caching
+ * Load CSS content from URL via cURL with caching and invalidation
+ *
+ * This function implements proper cache invalidation using HTTP conditional requests.
+ * When a CSS file changes on the server, the cache is automatically invalidated and
+ * the new CSS is fetched, which results in a new content hash and PNG regeneration.
  *
  * @param string $cssUrl The CSS URL to load
  * @return string CSS content
@@ -1412,23 +1472,27 @@ function loadCssContent($cssUrl) {
         ]);
     }
 
-    // Check if we have a valid cached version
-    if (isCssCacheValid($cssUrl)) {
-        $cachePath = getCssCachePath($cssUrl);
+    // Check cache freshness using conditional HTTP request
+    $freshnessCheck = checkCssCacheFreshness($cssUrl);
+    $cachePath = getCssCachePath($cssUrl);
+
+    // If cache is valid (HTTP 304), return cached content
+    if ($freshnessCheck['valid']) {
         $cssContent = file_get_contents($cachePath);
         $metadata = loadCssMetadata($cssUrl);
 
-        // Return cached content
         return [
             'content' => $cssContent,
             'cached' => true,
             'cache_filemtime' => filemtime($cachePath),
             'cache_age' => time() - filemtime($cachePath),
-            'metadata' => $metadata
+            'metadata' => $metadata,
+            'cache_status' => 'hit',
+            'freshness_check' => $freshnessCheck
         ];
     }
 
-    // Need to fetch from remote URL
+    // Need to fetch from remote URL (cache miss or expired)
     // Initialize cURL
     $ch = curl_init($cssUrl);
     if ($ch === false) {
@@ -1447,26 +1511,44 @@ function loadCssContent($cssUrl) {
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     curl_setopt($ch, CURLOPT_USERAGENT, 'RapidHTML2PNG/1.0');
 
-    // Request headers to get ETag and Last-Modified
-    $headers = [];
-    curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($curl, $header) use (&$headers) {
+    // Add conditional headers if we have cached metadata
+    $metadata = loadCssMetadata($cssUrl);
+    if ($metadata !== null) {
+        $headers = [];
+        if (!empty($metadata['etag'])) {
+            $headers[] = 'If-None-Match: ' . $metadata['etag'];
+        }
+        if (!empty($metadata['last_modified'])) {
+            $headers[] = 'If-Modified-Since: ' . gmdate('D, d M Y H:i:s T', $metadata['last_modified']) . ' GMT';
+        }
+        if (!empty($headers)) {
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        }
+    }
+
+    // Request headers to capture ETag and Last-Modified
+    $responseHeaders = [];
+    curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($curl, $header) use (&$responseHeaders) {
         $len = strlen($header);
         $header = explode(':', $header, 2);
         if (count($header) < 2) {
             return $len;
         }
-        $headers[strtolower(trim($header[0]))][] = trim($header[1]);
+        $responseHeaders[strtolower(trim($header[0]))][] = trim($header[1]);
         return $len;
     });
 
     // Execute cURL request
     $cssContent = curl_exec($ch);
 
-    // Check for errors
+    // Get HTTP status code
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    // Check for cURL errors
     if ($cssContent === false) {
         $error = curl_error($ch);
         $errno = curl_errno($ch);
-        curl_close($ch);
         sendError(500, 'Failed to load CSS file via cURL', [
             'css_url' => $cssUrl,
             'curl_error' => $error,
@@ -1474,12 +1556,45 @@ function loadCssContent($cssUrl) {
         ]);
     }
 
-    // Get HTTP status code
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // Handle HTTP 304 Not Modified (cache is still valid)
+    if ($httpCode === 304) {
+        // Server confirms cache is still valid
+        $cssContent = file_get_contents($cachePath);
+        $metadata = loadCssMetadata($cssUrl);
 
-    // Check HTTP status code
+        // Update cache filemtime to now
+        touch($cachePath);
+
+        return [
+            'content' => $cssContent,
+            'cached' => true,
+            'cache_filemtime' => filemtime($cachePath),
+            'cache_age' => time() - filemtime($cachePath),
+            'metadata' => $metadata,
+            'cache_status' => 'validated',
+            'http_code' => 304
+        ];
+    }
+
+    // Check HTTP status code for errors
     if ($httpCode !== 200) {
+        // If we have cached content and server is unreachable, use cache as fallback
+        if (file_exists($cachePath) && $httpCode >= 500) {
+            $cssContent = file_get_contents($cachePath);
+            $metadata = loadCssMetadata($cssUrl);
+
+            return [
+                'content' => $cssContent,
+                'cached' => true,
+                'cache_filemtime' => filemtime($cachePath),
+                'cache_age' => time() - filemtime($cachePath),
+                'metadata' => $metadata,
+                'cache_status' => 'fallback',
+                'http_code' => $httpCode,
+                'warning' => 'Using cached content due to server error'
+            ];
+        }
+
         sendError(500, 'CSS file returned non-200 status code', [
             'css_url' => $cssUrl,
             'http_code' => $httpCode
@@ -1507,11 +1622,10 @@ function loadCssContent($cssUrl) {
     }
 
     // Extract ETag and Last-Modified from headers
-    $etag = $headers['etag'][0] ?? null;
-    $lastModified = isset($headers['last-modified'][0]) ? strtotime($headers['last-modified'][0]) : null;
+    $etag = $responseHeaders['etag'][0] ?? null;
+    $lastModified = isset($responseHeaders['last-modified'][0]) ? strtotime($responseHeaders['last-modified'][0]) : null;
 
-    // Save to cache
-    $cachePath = getCssCachePath($cssUrl);
+    // Save to cache (this will overwrite old cache if CSS changed)
     file_put_contents($cachePath, $cssContent);
 
     // Save metadata
@@ -1524,7 +1638,9 @@ function loadCssContent($cssUrl) {
         'etag' => $etag,
         'last_modified' => $lastModified,
         'cache_file_path' => $cachePath,
-        'cache_filemtime' => filemtime($cachePath)
+        'cache_filemtime' => filemtime($cachePath),
+        'cache_status' => 'fresh',
+        'http_code' => $httpCode
     ];
 }
 
