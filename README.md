@@ -7,7 +7,8 @@ The project is implemented as a single script (`convert.php`) with built-in:
 - CSS loading by URL with cache invalidation,
 - content-hash based PNG caching,
 - automatic renderer detection and fallback,
-- optional forced renderer selection via request flag.
+- optional forced renderer selection via request flag,
+- API key check, single-instance execution lock, and runtime timeout.
 
 ## Real Rendering Behavior
 
@@ -39,6 +40,7 @@ If non-UTF-8 text is detected, the API attempts conversion from common legacy en
 Minimum:
 - PHP 7.4+
 - Extensions: `curl`, `gd`, `mbstring`
+- Environment variable: `RAPIDHTML2PNG_API_KEY`
 - Writable directories:
   - `assets/media/rapidhtml2png`
   - `logs`
@@ -77,6 +79,10 @@ RapidHTML2PNG/
 docker compose up -d
 ```
 
+Default dev key in `docker-compose.yml`:
+- `rapidhtml2png-dev-key`
+- change it before production use
+
 API endpoint:
 - `http://localhost:8080/convert.php`
 
@@ -84,6 +90,11 @@ API endpoint:
 
 ```bash
 php -S localhost:8080
+```
+
+Set API key before start:
+```bash
+export RAPIDHTML2PNG_API_KEY=your-secret-key
 ```
 
 Windows helper:
@@ -104,6 +115,7 @@ Supported content types:
 
 ### Request fields
 
+- `api_key` (required): request API key (or send via `X-API-Key` header)
 - `html_blocks` (required): array of HTML strings
 - `css_url` (optional): `http`/`https` URL to CSS file
 - `render_engine` (optional): renderer override
@@ -121,7 +133,9 @@ Compatibility aliases for the same option:
 ```bash
 curl -X POST http://localhost:8080/convert.php \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
   -d '{
+    "api_key": "YOUR_KEY",
     "html_blocks": ["<div><p>Hello</p></div>"],
     "css_url": "http://localhost/main.css",
     "render_engine": "auto"
@@ -133,12 +147,21 @@ curl -X POST http://localhost:8080/convert.php \
 ```powershell
 $html = Get-Content -Raw test_html_to_render.html
 $body = @{
+  'api_key' = 'YOUR_KEY'
   'html_blocks[]' = $html
   'css_url' = 'http://localhost/main.css'
   'render_engine' = 'gd'
 }
 Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/convert.php' -Body $body
 ```
+
+## Abuse Protection
+
+- API key is mandatory. Missing/invalid key is rejected before conversion starts.
+- Only one active conversion request is allowed at a time (`convert_runtime.lock`).
+- Concurrent requests return: `Work already in progress, please wait`.
+- Hard timeout per request: `300` seconds.
+- In forced mode (`render_engine` set), engine-specific cache files are used: `<hash>_<engine>.png`.
 
 ## Response Shape
 

@@ -15,6 +15,7 @@ services:
       - PHP_MEMORY_LIMIT=256M
       - UPLOAD_MAX_FILESIZE=10M
       - POST_MAX_SIZE=10M
+      - RAPIDHTML2PNG_API_KEY=rapidhtml2png-dev-key
     restart: unless-stopped
     networks:
       - rapidhtml2png-network

@@ -22,12 +22,17 @@ header('Content-Type: application/json; charset=utf-8');
 // Allow CORS for development (restrict in production)
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-API-Key');
 
 // Input size limits (in bytes)
 define('MAX_HTML_BLOCK_SIZE', 1048576); // 1MB per HTML block
 define('MAX_TOTAL_INPUT_SIZE', 5242880); // 5MB total input size
 define('MAX_CSS_SIZE', 1048576); // 1MB for CSS content
+
+// Abuse protection settings
+define('REQUEST_MAX_RUNTIME_SECONDS', 300); // 5 minutes
+define('REQUEST_LOCK_PATH', __DIR__ . '/logs/convert_runtime.lock');
+define('API_KEY_ENV_NAME', 'RAPIDHTML2PNG_API_KEY');
 
 // Enforce UTF-8 processing for all text operations.
 if (function_exists('mb_internal_encoding')) {
@@ -36,6 +41,11 @@ if (function_exists('mb_internal_encoding')) {
 if (function_exists('mb_regex_encoding')) {
     mb_regex_encoding('UTF-8');
 }
+
+$GLOBALS['request_guard'] = [
+    'started_at' => microtime(true),
+    'lock_handle' => null
+];
 
 // Handle OPTIONS preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -339,6 +349,180 @@ function normalizePayloadUtf8($value, $path = 'input') {
     return $value;
 }
 
+/**
+ * Get raw request body with in-memory caching.
+ *
+ * @return string
+ */
+function getRawRequestBody() {
+    static $rawBody = null;
+    if ($rawBody === null) {
+        $rawBody = file_get_contents('php://input');
+        if ($rawBody === false) {
+            $rawBody = '';
+        }
+    }
+    return $rawBody;
+}
+
+/**
+ * Emit compact JSON response without error logging helper.
+ *
+ * @param int $code HTTP status code
+ * @param array $payload Response payload
+ * @return void
+ */
+function emitSimpleJson($code, $payload) {
+    http_response_code($code);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+}
+
+/**
+ * Get configured API key from environment.
+ *
+ * @return string|null
+ */
+function getConfiguredApiKey() {
+    $apiKey = getenv(API_KEY_ENV_NAME);
+    if ($apiKey === false || $apiKey === null) {
+        return null;
+    }
+
+    $apiKey = trim((string)$apiKey);
+    return $apiKey === '' ? null : $apiKey;
+}
+
+/**
+ * Extract API key from headers or request payload.
+ *
+ * @return string|null
+ */
+function extractApiKeyFromRequest() {
+    $headerCandidates = [
+        'HTTP_X_API_KEY',
+        'HTTP_X_APIKEY',
+        'REDIRECT_HTTP_X_API_KEY'
+    ];
+
+    foreach ($headerCandidates as $headerName) {
+        if (!empty($_SERVER[$headerName])) {
+            return trim((string)$_SERVER[$headerName]);
+        }
+    }
+
+    if (isset($_POST['api_key'])) {
+        return trim((string)$_POST['api_key']);
+    }
+
+    if (isset($_GET['api_key'])) {
+        return trim((string)$_GET['api_key']);
+    }
+
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (strpos($contentType, 'application/json') !== false) {
+        $jsonFlags = defined('JSON_INVALID_UTF8_SUBSTITUTE') ? JSON_INVALID_UTF8_SUBSTITUTE : 0;
+        $payload = json_decode(getRawRequestBody(), true, 512, $jsonFlags);
+        if (is_array($payload) && isset($payload['api_key'])) {
+            return trim((string)$payload['api_key']);
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Release single-instance lock handle.
+ *
+ * @return void
+ */
+function releaseRequestLock() {
+    $lockHandle = $GLOBALS['request_guard']['lock_handle'] ?? null;
+    if (!is_resource($lockHandle)) {
+        return;
+    }
+
+    @flock($lockHandle, LOCK_UN);
+    @fclose($lockHandle);
+    $GLOBALS['request_guard']['lock_handle'] = null;
+}
+
+/**
+ * Acquire non-blocking single-instance lock.
+ *
+ * @return array
+ */
+function acquireRequestLock() {
+    $lockDir = dirname(REQUEST_LOCK_PATH);
+    if (!is_dir($lockDir)) {
+        @mkdir($lockDir, 0755, true);
+    }
+
+    $lockHandle = @fopen(REQUEST_LOCK_PATH, 'c+');
+    if ($lockHandle === false) {
+        return [
+            'acquired' => false,
+            'reason' => 'lock_open_failed'
+        ];
+    }
+
+    if (!@flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        @fclose($lockHandle);
+        $runningMeta = json_decode((string)@file_get_contents(REQUEST_LOCK_PATH), true);
+        if (!is_array($runningMeta)) {
+            $runningMeta = [];
+        }
+
+        return [
+            'acquired' => false,
+            'reason' => 'already_running',
+            'running_meta' => $runningMeta
+        ];
+    }
+
+    $lockMeta = [
+        'started_at' => time(),
+        'pid' => function_exists('getmypid') ? getmypid() : null,
+        'uri' => $_SERVER['REQUEST_URI'] ?? '/convert.php'
+    ];
+
+    ftruncate($lockHandle, 0);
+    rewind($lockHandle);
+    fwrite($lockHandle, json_encode($lockMeta, JSON_UNESCAPED_SLASHES));
+    fflush($lockHandle);
+
+    $GLOBALS['request_guard']['lock_handle'] = $lockHandle;
+    register_shutdown_function('releaseRequestLock');
+
+    return [
+        'acquired' => true,
+        'meta' => $lockMeta
+    ];
+}
+
+/**
+ * Abort request if runtime exceeded configured max duration.
+ *
+ * @param string $stage Runtime stage marker
+ * @return void
+ */
+function enforceRuntimeLimit($stage = 'runtime') {
+    $startedAt = $GLOBALS['request_guard']['started_at'] ?? microtime(true);
+    $elapsed = microtime(true) - $startedAt;
+    if ($elapsed <= REQUEST_MAX_RUNTIME_SECONDS) {
+        return;
+    }
+
+    releaseRequestLock();
+    emitSimpleJson(408, [
+        'success' => false,
+        'error' => 'Request timed out',
+        'stage' => $stage,
+        'max_runtime_seconds' => REQUEST_MAX_RUNTIME_SECONDS,
+        'elapsed_seconds' => (int)round($elapsed)
+    ]);
+    exit;
+}
+
 // Only allow POST requests for actual conversion (unless in test mode)
 if (!defined('TEST_MODE') && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     sendError(405, 'Method Not Allowed', [
@@ -347,6 +531,65 @@ if (!defined('TEST_MODE') && $_SERVER['REQUEST_METHOD'] !== 'POST') {
         'documentation' => 'This endpoint accepts POST requests with html_blocks and optional css_url/render_engine for conversion to PNG'
     ]);
 }
+
+// Configure script hard timeout for long-running executions.
+if (!defined('TEST_MODE') && function_exists('set_time_limit')) {
+    @set_time_limit(REQUEST_MAX_RUNTIME_SECONDS);
+}
+
+// Require API key without invoking structured error logger.
+if (!defined('TEST_MODE')) {
+    $configuredApiKey = getConfiguredApiKey();
+    if ($configuredApiKey === null) {
+        emitSimpleJson(503, [
+            'success' => false,
+            'error' => 'API key is not configured',
+            'config_env' => API_KEY_ENV_NAME
+        ]);
+        return;
+    }
+
+    $providedApiKey = extractApiKeyFromRequest();
+    if ($providedApiKey === null || $providedApiKey === '') {
+        emitSimpleJson(401, [
+            'success' => false,
+            'error' => 'API key is required'
+        ]);
+        return;
+    }
+
+    if (!hash_equals($configuredApiKey, $providedApiKey)) {
+        emitSimpleJson(403, [
+            'success' => false,
+            'error' => 'Invalid API key'
+        ]);
+        return;
+    }
+
+    $lockResult = acquireRequestLock();
+    if (!$lockResult['acquired']) {
+        if (($lockResult['reason'] ?? '') === 'already_running') {
+            $runningStartedAt = (int)($lockResult['running_meta']['started_at'] ?? 0);
+            $runningFor = $runningStartedAt > 0 ? max(0, time() - $runningStartedAt) : null;
+            emitSimpleJson(429, [
+                'success' => false,
+                'error' => 'Work already in progress, please wait',
+                'running_for_seconds' => $runningFor,
+                'max_runtime_seconds' => REQUEST_MAX_RUNTIME_SECONDS,
+                'running_over_timeout' => $runningFor !== null && $runningFor > REQUEST_MAX_RUNTIME_SECONDS
+            ]);
+            return;
+        }
+
+        emitSimpleJson(503, [
+            'success' => false,
+            'error' => 'Failed to acquire execution lock'
+        ]);
+        return;
+    }
+}
+
+enforceRuntimeLimit('startup');
 
 /**
  * Parse input data from POST request
@@ -359,7 +602,7 @@ function parseInput() {
 
     // Handle JSON input
     if (strpos($contentType, 'application/json') !== false) {
-        $json = file_get_contents('php://input');
+        $json = getRawRequestBody();
         $jsonFlags = defined('JSON_INVALID_UTF8_SUBSTITUTE') ? JSON_INVALID_UTF8_SUBSTITUTE : 0;
         $data = json_decode($json, true, 512, $jsonFlags);
 
@@ -1583,6 +1826,8 @@ function hexColorToRgb($hex) {
  * @return array Result with success status and file path
  */
 function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $preferredEngine = null) {
+    enforceRuntimeLimit('convert_start');
+
     // Get output directory
     $outputDir = getOutputDirectory();
     $cacheFileKey = $contentHash;
@@ -1639,6 +1884,7 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $preferredEngi
     // Render using available libraries in priority order with fallback.
     $failedAttempts = [];
     foreach ($availableLibraries as $libraryName) {
+        enforceRuntimeLimit('convert_render_' . $libraryName);
         $result = null;
         switch ($libraryName) {
             case 'wkhtmltoimage':
@@ -1690,6 +1936,8 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $preferredEngi
  * @throws Exception If cURL request fails
  */
 function loadCssContent($cssUrl) {
+    enforceRuntimeLimit('load_css_start');
+
     // Check if cURL is available
     if (!extension_loaded('curl')) {
         sendError(500, 'cURL extension is not available', [
@@ -1765,11 +2013,13 @@ function loadCssContent($cssUrl) {
     });
 
     // Execute cURL request
+    enforceRuntimeLimit('load_css_before_curl_exec');
     $cssContent = curl_exec($ch);
 
     // Get HTTP status code
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+    enforceRuntimeLimit('load_css_after_curl_exec');
 
     // Check for cURL errors
     if ($cssContent === false) {
@@ -1873,12 +2123,15 @@ function loadCssContent($cssUrl) {
 }
 
 // Check total input size before parsing
+enforceRuntimeLimit('before_input_size_check');
 checkTotalInputSize();
 
 // Parse input data
+enforceRuntimeLimit('before_parse_input');
 $input = parseInput();
 
 // Extract and validate parameters
+enforceRuntimeLimit('before_validate_input');
 $htmlBlocks = validateHtmlBlocks($input['html_blocks'] ?? null);
 $cssUrl = validateCssUrl($input['css_url'] ?? null);
 $requestedRenderEngine = validateRenderEngine(
@@ -1889,11 +2142,13 @@ $requestedRenderEngine = validateRenderEngine(
 $cssResult = null;
 $cssContent = null;
 if ($cssUrl !== null) {
+    enforceRuntimeLimit('before_css_load');
     $cssResult = loadCssContent($cssUrl);
     $cssContent = $cssResult['content'];
 }
 
 // Detect available rendering libraries
+enforceRuntimeLimit('before_library_detection');
 $libraryDetection = detectAvailableLibraries();
 
 // Log the library selection for debugging
@@ -1925,6 +2180,7 @@ if ($requestedRenderEngine !== null) {
 logLibrarySelection($selectedLibrary, $libraryDetection, $selectionReason);
 
 // Generate content hash from HTML and CSS
+enforceRuntimeLimit('before_hash_generation');
 $contentHash = generateContentHash($htmlBlocks, $cssContent);
 
 // Return successful parsing response (for now, until conversion is implemented)
@@ -1970,6 +2226,7 @@ if ($cssResult !== null) {
 }
 
 // Convert HTML to PNG
+enforceRuntimeLimit('before_render');
 $renderResult = convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $requestedRenderEngine);
 
 // Add rendering results to response
@@ -1990,4 +2247,5 @@ if (isset($renderResult['command_used'])) {
     $responseData['rendering']['command_used'] = $renderResult['command_used'];
 }
 
+enforceRuntimeLimit('before_success_response');
 sendSuccess($responseData, 'HTML converted to PNG successfully');
