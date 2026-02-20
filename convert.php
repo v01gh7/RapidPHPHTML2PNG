@@ -344,7 +344,7 @@ if (!defined('TEST_MODE') && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     sendError(405, 'Method Not Allowed', [
         'allowed_methods' => ['POST'],
         'endpoint' => '/convert.php',
-        'documentation' => 'This endpoint accepts POST requests with HTML blocks and CSS URL for conversion to PNG'
+        'documentation' => 'This endpoint accepts POST requests with html_blocks and optional css_url/render_engine for conversion to PNG'
     ]);
 }
 
@@ -411,7 +411,7 @@ function validateHtmlBlocks($htmlBlocks) {
     if ($htmlBlocks === null || $htmlBlocks === '') {
         sendError(400, 'Missing required parameter: html_blocks', [
             'required_parameters' => ['html_blocks'],
-            'optional_parameters' => ['css_url']
+            'optional_parameters' => ['css_url', 'render_engine']
         ]);
     }
 
@@ -515,6 +515,48 @@ function validateCssUrl($cssUrl) {
     }
 
     return $cssUrl;
+}
+
+/**
+ * Validate requested render engine (optional).
+ *
+ * Supported aliases:
+ * - imagick => imagemagick
+ * - auto => null (default fallback mode)
+ *
+ * @param mixed $renderEngine Requested engine value
+ * @return string|null Canonical engine name or null for auto mode
+ */
+function validateRenderEngine($renderEngine) {
+    if ($renderEngine === null || $renderEngine === '') {
+        return null;
+    }
+
+    if (!is_string($renderEngine)) {
+        sendError(400, 'render_engine must be a string', [
+            'received_type' => gettype($renderEngine),
+            'allowed_values' => ['auto', 'wkhtmltoimage', 'gd', 'imagick', 'imagemagick']
+        ]);
+    }
+
+    $renderEngine = strtolower(trim(normalizeToUtf8($renderEngine, 'render_engine')));
+
+    $aliases = [
+        'auto' => null,
+        'imagick' => 'imagemagick',
+        'imagemagick' => 'imagemagick',
+        'wkhtmltoimage' => 'wkhtmltoimage',
+        'gd' => 'gd'
+    ];
+
+    if (!array_key_exists($renderEngine, $aliases)) {
+        sendError(400, 'Invalid render_engine value', [
+            'provided_value' => $renderEngine,
+            'allowed_values' => ['auto', 'wkhtmltoimage', 'gd', 'imagick', 'imagemagick']
+        ]);
+    }
+
+    return $aliases[$renderEngine];
 }
 
 /**
@@ -1537,18 +1579,24 @@ function hexColorToRgb($hex) {
  * @param array $htmlBlocks Array of HTML content blocks
  * @param string|null $cssContent Optional CSS content
  * @param string $contentHash Hash for cache file naming
+ * @param string|null $preferredEngine Optional forced engine (wkhtmltoimage|gd|imagemagick)
  * @return array Result with success status and file path
  */
-function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
+function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $preferredEngine = null) {
     // Get output directory
     $outputDir = getOutputDirectory();
-    $outputPath = $outputDir . '/' . $contentHash . '.png';
+    $cacheFileKey = $contentHash;
+    if ($preferredEngine !== null) {
+        $cacheFileKey .= '_' . $preferredEngine;
+    }
+    $outputPath = $outputDir . '/' . $cacheFileKey . '.png';
 
-    // Check if file already exists (cache hit)
+    // Check if file already exists (cache hit).
     if (file_exists($outputPath)) {
         return [
             'success' => true,
             'cached' => true,
+            'engine' => $preferredEngine ?? null,
             'output_path' => $outputPath,
             'file_size' => filesize($outputPath)
         ];
@@ -1562,6 +1610,24 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
         if (!empty($detection['detected_libraries'][$libraryName]['available'])) {
             $availableLibraries[] = $libraryName;
         }
+    }
+
+    if ($preferredEngine !== null) {
+        if (!in_array($preferredEngine, $priority, true)) {
+            sendError(500, 'Unknown requested rendering engine', [
+                'requested_engine' => $preferredEngine
+            ]);
+        }
+
+        if (!in_array($preferredEngine, $availableLibraries, true)) {
+            sendError(500, 'Requested rendering engine is not available', [
+                'requested_engine' => $preferredEngine,
+                'available_libraries' => $availableLibraries,
+                'detected_libraries' => $detection['detected_libraries']
+            ]);
+        }
+
+        $availableLibraries = [$preferredEngine];
     }
 
     if (empty($availableLibraries)) {
@@ -1815,6 +1881,9 @@ $input = parseInput();
 // Extract and validate parameters
 $htmlBlocks = validateHtmlBlocks($input['html_blocks'] ?? null);
 $cssUrl = validateCssUrl($input['css_url'] ?? null);
+$requestedRenderEngine = validateRenderEngine(
+    $input['render_engine'] ?? $input['renderer'] ?? $input['engine'] ?? null
+);
 
 // Load CSS content if URL is provided
 $cssResult = null;
@@ -1828,9 +1897,21 @@ if ($cssUrl !== null) {
 $libraryDetection = detectAvailableLibraries();
 
 // Log the library selection for debugging
-$selectedLibrary = $libraryDetection['best_library'] ?? null;
+$selectedLibrary = $requestedRenderEngine ?? ($libraryDetection['best_library'] ?? null);
 $selectionReason = '';
-if ($selectedLibrary) {
+if ($requestedRenderEngine !== null) {
+    if (!empty($libraryDetection['detected_libraries'][$requestedRenderEngine]['available'])) {
+        $selectionReason = sprintf(
+            'Selected by request parameter render_engine=%s',
+            strtoupper($requestedRenderEngine)
+        );
+    } else {
+        $selectionReason = sprintf(
+            'Requested render_engine=%s is not available',
+            strtoupper($requestedRenderEngine)
+        );
+    }
+} elseif ($selectedLibrary) {
     $priorityOrder = ['wkhtmltoimage' => 1, 'gd' => 2, 'imagemagick' => 3];
     $priority = $priorityOrder[$selectedLibrary] ?? 0;
     $selectionReason = sprintf(
@@ -1854,6 +1935,7 @@ $responseData = [
         return substr($block, 0, 100) . (strlen($block) > 100 ? '...' : '');
     }, $htmlBlocks),
     'css_url' => $cssUrl,
+    'render_engine_requested' => $requestedRenderEngine ?? 'auto',
     'content_hash' => $contentHash,
     'hash_algorithm' => 'md5',
     'hash_length' => strlen($contentHash),
@@ -1888,11 +1970,13 @@ if ($cssResult !== null) {
 }
 
 // Convert HTML to PNG
-$renderResult = convertHtmlToPng($htmlBlocks, $cssContent, $contentHash);
+$renderResult = convertHtmlToPng($htmlBlocks, $cssContent, $contentHash, $requestedRenderEngine);
 
 // Add rendering results to response
 $responseData['rendering'] = [
     'engine' => $renderResult['engine'] ?? 'unknown',
+    'selection_mode' => $requestedRenderEngine === null ? 'auto' : 'forced',
+    'requested_engine' => $requestedRenderEngine ?? 'auto',
     'cached' => $renderResult['cached'] ?? false,
     'output_file' => $renderResult['output_path'] ?? null,
     'file_size' => $renderResult['file_size'] ?? null,

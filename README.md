@@ -6,7 +6,8 @@ The project is implemented as a single script (`convert.php`) with built-in:
 - input validation and HTML sanitization,
 - CSS loading by URL with cache invalidation,
 - content-hash based PNG caching,
-- automatic renderer detection and fallback.
+- automatic renderer detection and fallback,
+- optional forced renderer selection via request flag.
 
 ## Real Rendering Behavior
 
@@ -19,6 +20,7 @@ Important detail:
 - `imagick` and `gd` fallback modes do not render full browser layout. They extract text and apply only basic style hints.
 - Output PNG is saved with a transparent background.
 - GD fallback uses a Unicode TrueType font (`DejaVuSans` when available), so Cyrillic text is rendered in UTF-8 correctly.
+- Optional request flag `render_engine` allows forced engine selection (`wkhtmltoimage|gd|imagick|imagemagick`); without it, auto-fallback is used.
 
 ## Encoding (UTF-8)
 
@@ -104,6 +106,15 @@ Supported content types:
 
 - `html_blocks` (required): array of HTML strings
 - `css_url` (optional): `http`/`https` URL to CSS file
+- `render_engine` (optional): renderer override
+  - `auto` (default)
+  - `wkhtmltoimage`
+  - `gd`
+  - `imagick` or `imagemagick` (alias)
+
+Compatibility aliases for the same option:
+- `renderer`
+- `engine`
 
 ### cURL example (JSON)
 
@@ -112,7 +123,8 @@ curl -X POST http://localhost:8080/convert.php \
   -H "Content-Type: application/json" \
   -d '{
     "html_blocks": ["<div><p>Hello</p></div>"],
-    "css_url": "http://localhost/main.css"
+    "css_url": "http://localhost/main.css",
+    "render_engine": "auto"
   }'
 ```
 
@@ -123,6 +135,7 @@ $html = Get-Content -Raw test_html_to_render.html
 $body = @{
   'html_blocks[]' = $html
   'css_url' = 'http://localhost/main.css'
+  'render_engine' = 'gd'
 }
 Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/convert.php' -Body $body
 ```
@@ -137,9 +150,12 @@ Success response:
   "message": "HTML converted to PNG successfully",
   "data": {
     "content_hash": "<md5>",
+    "render_engine_requested": "auto|wkhtmltoimage|gd|imagemagick",
     "library_detection": { ... },
     "rendering": {
       "engine": "wkhtmltoimage|imagemagick|gd",
+      "selection_mode": "auto|forced",
+      "requested_engine": "auto|wkhtmltoimage|gd|imagemagick",
       "cached": false,
       "output_file": ".../assets/media/rapidhtml2png/<md5>.png",
       "file_size": 12345,
@@ -173,6 +189,7 @@ Two cache layers are used:
 2. PNG cache:
 - Output file name is MD5 of `html_blocks + css_content`
 - If the same hash already exists, the existing PNG is returned
+- In forced mode (`render_engine` set), engine-specific cache files are used: `<hash>_<engine>.png`
 
 ## Notes for Docker CSS URLs
 
@@ -189,6 +206,7 @@ This usually fails from inside container context:
 - `405 Method Not Allowed`: use `POST`, not `GET`.
 - `Missing required parameter: html_blocks`: send at least one HTML block.
 - `No rendering libraries available`: install/enable required extensions and tools.
+- `Requested rendering engine is not available`: remove `render_engine` or pick an available engine from `library_detection`.
 - CSS fetch errors: verify `css_url` is reachable from the PHP runtime environment.
 - `WriteBlob Failed` or `Output file was not created`: fix output permissions inside container:
   - `docker compose exec -T app sh -lc "chown -R www-data:www-data /var/www/html/assets/media/rapidhtml2png && chmod -R 775 /var/www/html/assets/media/rapidhtml2png"`
