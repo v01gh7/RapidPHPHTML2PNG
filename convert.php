@@ -29,6 +29,14 @@ define('MAX_HTML_BLOCK_SIZE', 1048576); // 1MB per HTML block
 define('MAX_TOTAL_INPUT_SIZE', 5242880); // 5MB total input size
 define('MAX_CSS_SIZE', 1048576); // 1MB for CSS content
 
+// Enforce UTF-8 processing for all text operations.
+if (function_exists('mb_internal_encoding')) {
+    mb_internal_encoding('UTF-8');
+}
+if (function_exists('mb_regex_encoding')) {
+    mb_regex_encoding('UTF-8');
+}
+
 // Handle OPTIONS preflight requests
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -264,6 +272,73 @@ function sendSuccess($data = null, $message = 'OK') {
     }
 }
 
+/**
+ * Normalize string to UTF-8.
+ *
+ * @param mixed $text Input value
+ * @param string $fieldName Field name for error context
+ * @return mixed UTF-8 string or original non-string value
+ */
+function normalizeToUtf8($text, $fieldName = 'input') {
+    if (!is_string($text)) {
+        return $text;
+    }
+
+    // Remove UTF-8 BOM if present.
+    $text = preg_replace('/^\xEF\xBB\xBF/', '', $text);
+    if ($text === '') {
+        return $text;
+    }
+
+    if (function_exists('mb_check_encoding') && mb_check_encoding($text, 'UTF-8')) {
+        return $text;
+    }
+
+    if (!function_exists('mb_convert_encoding') || !function_exists('mb_check_encoding')) {
+        sendError(500, 'mbstring extension is required for UTF-8 normalization', [
+            'field' => $fieldName,
+            'required_extension' => 'mbstring'
+        ]);
+    }
+
+    $sourceEncodings = ['UTF-8', 'Windows-1251', 'CP1251', 'KOI8-R', 'ISO-8859-1'];
+    foreach ($sourceEncodings as $sourceEncoding) {
+        $converted = @mb_convert_encoding($text, 'UTF-8', $sourceEncoding);
+        if ($converted !== false && mb_check_encoding($converted, 'UTF-8')) {
+            return $converted;
+        }
+    }
+
+    sendError(400, 'Invalid text encoding detected', [
+        'field' => $fieldName,
+        'expected_encoding' => 'UTF-8'
+    ]);
+}
+
+/**
+ * Recursively normalize request payload to UTF-8.
+ *
+ * @param mixed $value Input payload
+ * @param string $path Current path for error context
+ * @return mixed Normalized payload
+ */
+function normalizePayloadUtf8($value, $path = 'input') {
+    if (is_array($value)) {
+        $normalized = [];
+        foreach ($value as $key => $item) {
+            $itemPath = $path . '[' . $key . ']';
+            $normalized[$key] = normalizePayloadUtf8($item, $itemPath);
+        }
+        return $normalized;
+    }
+
+    if (is_string($value)) {
+        return normalizeToUtf8($value, $path);
+    }
+
+    return $value;
+}
+
 // Only allow POST requests for actual conversion (unless in test mode)
 if (!defined('TEST_MODE') && $_SERVER['REQUEST_METHOD'] !== 'POST') {
     sendError(405, 'Method Not Allowed', [
@@ -285,7 +360,8 @@ function parseInput() {
     // Handle JSON input
     if (strpos($contentType, 'application/json') !== false) {
         $json = file_get_contents('php://input');
-        $data = json_decode($json, true);
+        $jsonFlags = defined('JSON_INVALID_UTF8_SUBSTITUTE') ? JSON_INVALID_UTF8_SUBSTITUTE : 0;
+        $data = json_decode($json, true, 512, $jsonFlags);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             sendError(400, 'Invalid JSON', [
@@ -293,17 +369,17 @@ function parseInput() {
             ]);
         }
 
-        return $data ?? [];
+        return normalizePayloadUtf8($data ?? []);
     }
 
     // Handle multipart/form-data or form-urlencoded
     if (strpos($contentType, 'multipart/form-data') !== false ||
         strpos($contentType, 'application/x-www-form-urlencoded') !== false) {
-        return $_POST;
+        return normalizePayloadUtf8($_POST);
     }
 
     // Default to $_POST if no content type specified
-    return $_POST;
+    return normalizePayloadUtf8($_POST);
 }
 
 /**
@@ -369,6 +445,8 @@ function validateHtmlBlocks($htmlBlocks) {
             ]);
         }
 
+        $block = normalizeToUtf8($block, "html_blocks[$index]");
+
         // Check individual block size
         $blockSize = strlen($block);
         if ($blockSize > MAX_HTML_BLOCK_SIZE) {
@@ -418,6 +496,8 @@ function validateCssUrl($cssUrl) {
             'received_type' => gettype($cssUrl)
         ]);
     }
+
+    $cssUrl = normalizeToUtf8($cssUrl, 'css_url');
 
     // Basic URL validation
     if (!filter_var($cssUrl, FILTER_VALIDATE_URL)) {
@@ -513,7 +593,7 @@ function sanitizeHtmlInput($html) {
     // Remove any remaining potential HTML comments with malicious content
     $html = preg_replace('#<!--.*?-->#s', '', $html);
 
-    return trim($html);
+    return normalizeToUtf8(trim($html), 'html_sanitized');
 }
 
 /**
@@ -795,7 +875,7 @@ function detectAvailableLibraries() {
     ];
 
     // Determine best available library
-    $priority = ['wkhtmltoimage', 'imagemagick', 'gd'];
+    $priority = ['wkhtmltoimage', 'gd', 'imagemagick'];
     $bestLibrary = null;
     foreach ($priority as $lib) {
         if (isset($detected[$lib]) && $detected[$lib]['available']) {
@@ -1047,8 +1127,8 @@ function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
         // We'll create an image from the HTML content using annotation
 
         // Extract text content from HTML for rendering
-        $text = strip_tags($html);
-        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = extractTextFromHtml($html);
+        $text = normalizeToUtf8($text, 'imagemagick_text');
 
         // Parse basic CSS for styling
         $cssStyles = parseBasicCss($cssContent);
@@ -1063,6 +1143,7 @@ function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
         // Create a draw object for text annotation
         $draw = new ImagickDraw();
         $draw->setFillColor(new ImagickPixel($fontColor));
+        $draw->setTextEncoding('UTF-8');
         // Try to set a font, but don't fail if it's not available
         try {
             $draw->setFont('DejaVu-Sans');
@@ -1152,6 +1233,41 @@ function renderWithImageMagick($htmlBlocks, $cssContent, $outputPath) {
 }
 
 /**
+ * Find a Unicode-capable TrueType font for GD rendering.
+ *
+ * @return string|null Font path or null if not found
+ */
+function findUnicodeFontPath() {
+    $fontCandidates = [
+        __DIR__ . '/assets/fonts/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+        'C:/Windows/Fonts/arial.ttf'
+    ];
+
+    foreach ($fontCandidates as $fontPath) {
+        if (is_file($fontPath) && is_readable($fontPath)) {
+            return $fontPath;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * UTF-8 safe string length helper.
+ *
+ * @param string $text Text to measure
+ * @return int Length
+ */
+function utf8Length($text) {
+    if (function_exists('mb_strlen')) {
+        return mb_strlen($text, 'UTF-8');
+    }
+    return strlen($text);
+}
+
+/**
  * Render HTML to PNG using GD library (baseline fallback)
  *
  * This function uses PHP's GD library to create a basic PNG image from HTML.
@@ -1188,54 +1304,87 @@ function renderWithGD($htmlBlocks, $cssContent, $outputPath) {
     // Determine font size from CSS or use default
     $fontSize = $cssStyles['font_size'] ?? 16;
     $fontColor = $cssStyles['color'] ?? '#000000';
-    $backgroundColor = $cssStyles['background'] ?? null;
 
-    // Load font (use built-in font for simplicity)
-    $font = 5; // Built-in font (largest available)
+    // Normalize lines for rendering.
+    $lines = preg_split('/\R/u', $text);
+    $lines = array_values(array_filter(array_map('trim', $lines), function($line) {
+        return $line !== '';
+    }));
+    if (empty($lines)) {
+        $lines = [' '];
+    }
+
+    $padding = 10;
+    $fontPath = findUnicodeFontPath();
+    $useTtf = $fontPath !== null && function_exists('imagettfbbox') && function_exists('imagettftext');
+
+    // Defaults for built-in GD font fallback.
+    $font = 5;
     $fontWidth = imagefontwidth($font);
-    $fontHeight = imagefontheight($font);
+    $lineHeight = imagefontheight($font);
+    $lineSpacing = 2;
+    $maxWidth = 1;
 
-    // Calculate text dimensions
-    $lines = explode("\n", $text);
-    $maxWidth = 0;
-    foreach ($lines as $line) {
-        $lineWidth = strlen($line) * $fontWidth;
-        if ($lineWidth > $maxWidth) {
-            $maxWidth = $lineWidth;
+    if ($useTtf) {
+        $lineHeight = max(1, (int)ceil($fontSize * 1.4));
+        $lineSpacing = max(2, (int)ceil($fontSize * 0.35));
+        $fallbackCharWidth = max(7, (int)ceil($fontSize * 0.6));
+
+        foreach ($lines as $line) {
+            $bbox = imagettfbbox($fontSize, 0, $fontPath, $line);
+            if ($bbox !== false) {
+                $lineWidth = max(1, abs($bbox[2] - $bbox[0]));
+                $bboxHeight = max(1, abs($bbox[7] - $bbox[1]));
+                if ($bboxHeight > $lineHeight) {
+                    $lineHeight = $bboxHeight;
+                }
+            } else {
+                $lineWidth = max(1, utf8Length($line) * $fallbackCharWidth);
+            }
+
+            if ($lineWidth > $maxWidth) {
+                $maxWidth = $lineWidth;
+            }
+        }
+    } else {
+        foreach ($lines as $line) {
+            $lineWidth = max(1, utf8Length($line) * $fontWidth);
+            if ($lineWidth > $maxWidth) {
+                $maxWidth = $lineWidth;
+            }
         }
     }
-    $totalHeight = count($lines) * $fontHeight;
 
-    // Add padding
-    $padding = 10;
-    $imageWidth = $maxWidth + ($padding * 2);
-    $imageHeight = $totalHeight + ($padding * 2);
+    $imageWidth = max(1, $maxWidth + ($padding * 2));
+    $imageHeight = max(1, (count($lines) * $lineHeight) + (max(0, count($lines) - 1) * $lineSpacing) + ($padding * 2));
 
     // Create image
     $image = imagecreatetruecolor($imageWidth, $imageHeight);
 
-    // Allocate colors
-    if ($backgroundColor && $backgroundColor !== 'transparent') {
-        $bgRgb = hexColorToRgb($backgroundColor);
-        $bgColor = imagecolorallocate($image, $bgRgb['r'], $bgRgb['g'], $bgRgb['b']);
-        imagefill($image, 0, 0, $bgColor);
-    } else {
-        // Transparent background
-        imagealphablending($image, true);
-        imagesavealpha($image, true);
-        $transparent = imagecolorallocatealpha($image, 255, 255, 255, 127);
-        imagefill($image, 0, 0, $transparent);
-    }
+    // Keep output transparent regardless of source CSS background declarations.
+    imagealphablending($image, false);
+    imagesavealpha($image, true);
+    $transparent = imagecolorallocatealpha($image, 255, 255, 255, 127);
+    imagefill($image, 0, 0, $transparent);
+    imagealphablending($image, true);
 
     // Allocate text color
     $textRgb = hexColorToRgb($fontColor);
     $textColor = imagecolorallocate($image, $textRgb['r'], $textRgb['g'], $textRgb['b']);
 
-    // Draw text line by line
-    $y = $padding;
-    foreach ($lines as $line) {
-        imagestring($image, $font, $padding, $y, $line, $textColor);
-        $y += $fontHeight;
+    // Draw text line by line.
+    if ($useTtf) {
+        $y = $padding + $lineHeight;
+        foreach ($lines as $line) {
+            imagettftext($image, $fontSize, 0, $padding, $y, $textColor, $fontPath, $line);
+            $y += $lineHeight + $lineSpacing;
+        }
+    } else {
+        $y = $padding;
+        foreach ($lines as $line) {
+            imagestring($image, $font, $padding, $y, $line, $textColor);
+            $y += $lineHeight;
+        }
     }
 
     // Save PNG with web-quality compression
@@ -1286,25 +1435,24 @@ function renderWithGD($htmlBlocks, $cssContent, $outputPath) {
  * @return string Extracted plain text
  */
 function extractTextFromHtml($html) {
-    // Decode HTML entities
-    $text = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $html = normalizeToUtf8($html, 'html_extract');
 
-    // Remove HTML tags
+    // Preserve common block separators before stripping tags.
+    $html = preg_replace('#<\s*br\s*/?\s*>#i', "\n", $html);
+    $html = preg_replace('#</\s*p\s*>#i', "\n", $html);
+    $html = preg_replace('#</\s*div\s*>#i', "\n", $html);
+
+    // Decode entities and strip tags.
+    $text = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $text = strip_tags($text);
 
-    // Convert common HTML whitespace to newlines
-    $text = str_replace(['<br>', '<br/>', '<br />', '</p>'], "\n", $text);
-    $text = strip_tags($text); // Strip tags again after replacing breaks
-
-    // Normalize whitespace
-    $text = preg_replace('/\s+/', ' ', $text);
-    $text = str_replace([' , ', ' . ', ' ! ', ' ? '], [', ', '. ', '! ', '? '], $text);
-
-    // Trim and clean up
+    // Normalize line endings and whitespace.
+    $text = str_replace(["\r\n", "\r"], "\n", $text);
+    $text = preg_replace('/[ \t]+/u', ' ', $text);
+    $text = preg_replace('/\n{2,}/', "\n", $text);
     $text = trim($text);
-    $text = preg_replace('/\n\s*\n/', "\n", $text); // Remove empty lines
 
-    return $text;
+    return normalizeToUtf8($text, 'html_extract_result');
 }
 
 /**
@@ -1408,48 +1556,60 @@ function convertHtmlToPng($htmlBlocks, $cssContent, $contentHash) {
 
     // Detect available libraries
     $detection = detectAvailableLibraries();
-    $bestLibrary = $detection['best_library'] ?? null;
+    $priority = ['wkhtmltoimage', 'gd', 'imagemagick'];
+    $availableLibraries = [];
+    foreach ($priority as $libraryName) {
+        if (!empty($detection['detected_libraries'][$libraryName]['available'])) {
+            $availableLibraries[] = $libraryName;
+        }
+    }
 
-    if (!$bestLibrary) {
+    if (empty($availableLibraries)) {
         sendError(500, 'No rendering libraries available', [
             'detected_libraries' => $detection
         ]);
     }
 
-    // Render using the best available library
-    $result = null;
-    switch ($bestLibrary) {
-        case 'wkhtmltoimage':
-            $result = renderWithWkHtmlToImage($htmlBlocks, $cssContent, $outputPath);
-            break;
+    // Render using available libraries in priority order with fallback.
+    $failedAttempts = [];
+    foreach ($availableLibraries as $libraryName) {
+        $result = null;
+        switch ($libraryName) {
+            case 'wkhtmltoimage':
+                $result = renderWithWkHtmlToImage($htmlBlocks, $cssContent, $outputPath);
+                break;
 
-        case 'imagemagick':
-            $result = renderWithImageMagick($htmlBlocks, $cssContent, $outputPath);
-            break;
+            case 'imagemagick':
+                $result = renderWithImageMagick($htmlBlocks, $cssContent, $outputPath);
+                break;
 
-        case 'gd':
-            $result = renderWithGD($htmlBlocks, $cssContent, $outputPath);
-            break;
+            case 'gd':
+                $result = renderWithGD($htmlBlocks, $cssContent, $outputPath);
+                break;
 
-        default:
-            sendError(500, 'Unknown library selected', [
-                'library' => $bestLibrary
-            ]);
-    }
+            default:
+                $failedAttempts[$libraryName] = [
+                    'error' => 'Unknown library selected'
+                ];
+                continue 2;
+        }
 
-    // Check if rendering succeeded
-    if (!$result['success']) {
-        sendError(500, 'Rendering failed', [
-            'library' => $bestLibrary,
+        if (!empty($result['success'])) {
+            // Add cache flag for new renders
+            $result['cached'] = false;
+            return $result;
+        }
+
+        $failedAttempts[$libraryName] = [
             'error' => $result['error'] ?? 'Unknown error',
             'details' => $result
-        ]);
+        ];
     }
 
-    // Add cache flag for new renders
-    $result['cached'] = false;
-
-    return $result;
+    sendError(500, 'Rendering failed with all available libraries', [
+        'attempted_libraries' => $availableLibraries,
+        'failures' => $failedAttempts
+    ]);
 }
 
 /**
@@ -1478,7 +1638,7 @@ function loadCssContent($cssUrl) {
 
     // If cache is valid (HTTP 304), return cached content
     if ($freshnessCheck['valid']) {
-        $cssContent = file_get_contents($cachePath);
+        $cssContent = normalizeToUtf8(file_get_contents($cachePath), 'css_cache_content');
         $metadata = loadCssMetadata($cssUrl);
 
         return [
@@ -1559,7 +1719,7 @@ function loadCssContent($cssUrl) {
     // Handle HTTP 304 Not Modified (cache is still valid)
     if ($httpCode === 304) {
         // Server confirms cache is still valid
-        $cssContent = file_get_contents($cachePath);
+        $cssContent = normalizeToUtf8(file_get_contents($cachePath), 'css_cache_content');
         $metadata = loadCssMetadata($cssUrl);
 
         // Update cache filemtime to now
@@ -1580,7 +1740,7 @@ function loadCssContent($cssUrl) {
     if ($httpCode !== 200) {
         // If we have cached content and server is unreachable, use cache as fallback
         if (file_exists($cachePath) && $httpCode >= 500) {
-            $cssContent = file_get_contents($cachePath);
+            $cssContent = normalizeToUtf8(file_get_contents($cachePath), 'css_cache_content');
             $metadata = loadCssMetadata($cssUrl);
 
             return [
@@ -1608,6 +1768,8 @@ function loadCssContent($cssUrl) {
             'content_length' => strlen($cssContent)
         ]);
     }
+
+    $cssContent = normalizeToUtf8($cssContent, 'css_content');
 
     // Check CSS content size
     $cssSize = strlen($cssContent);
@@ -1669,7 +1831,7 @@ $libraryDetection = detectAvailableLibraries();
 $selectedLibrary = $libraryDetection['best_library'] ?? null;
 $selectionReason = '';
 if ($selectedLibrary) {
-    $priorityOrder = ['wkhtmltoimage' => 1, 'imagemagick' => 2, 'gd' => 3];
+    $priorityOrder = ['wkhtmltoimage' => 1, 'gd' => 2, 'imagemagick' => 3];
     $priority = $priorityOrder[$selectedLibrary] ?? 0;
     $selectionReason = sprintf(
         'Selected based on priority (priority %d) - %s is the best available library',
