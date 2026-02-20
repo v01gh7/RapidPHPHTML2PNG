@@ -10,6 +10,28 @@ Pipeline:
 3. Text blocks are extracted from the final HTML.
 4. The blocks are sent in batches to `convert.php` (`html_blocks[]`).
 
+## 0. Ready Transport Package
+
+Prebuilt package in repository:
+- `integrations/modx/rapidhtml2png-1.0.0-pl.transport.zip`
+
+You can upload this file directly in MODX:
+- `Extras -> Installer -> Upload a package`
+
+## Docker Build (PHP 7.4)
+
+Package builder Dockerfile:
+- `integrations/modx/ready_pocket/Dockerfile.package`
+
+PowerShell commands from project root:
+
+```powershell
+docker build -f .\integrations\modx\ready_pocket\Dockerfile.package -t rapidhtml2png-modx-packager .\integrations\modx\ready_pocket
+$src = (Resolve-Path .\integrations\modx\ready_pocket).Path
+docker run --rm -v "${src}:/work" -w /work rapidhtml2png-modx-packager bash -lc "composer config --global audit.block-insecure false && composer install --no-interaction --no-progress && composer run build"
+Copy-Item .\integrations\modx\ready_pocket\_packages\rapidhtml2png-1.0.0-pl.transport.zip .\integrations\modx\rapidhtml2png-1.0.0-pl.transport.zip -Force
+```
+
 ## 1. Prerequisites
 
 - MODX Revo `2.8.x`

@@ -10,6 +10,28 @@
 3. Из итогового HTML собираются блоки с текстом.
 4. Блоки отправляются batch-ами в `convert.php` (`html_blocks[]`).
 
+## 0. Готовый transport package
+
+Готовый архив уже лежит в репозитории:
+- `integrations/modx/rapidhtml2png-1.0.0-pl.transport.zip`
+
+Его можно сразу загружать в MODX:
+- `Extras -> Installer -> Upload a package`
+
+## Сборка через Docker (PHP 7.4)
+
+Dockerfile для сборки пакета:
+- `integrations/modx/ready_pocket/Dockerfile.package`
+
+Команды PowerShell из корня проекта:
+
+```powershell
+docker build -f .\integrations\modx\ready_pocket\Dockerfile.package -t rapidhtml2png-modx-packager .\integrations\modx\ready_pocket
+$src = (Resolve-Path .\integrations\modx\ready_pocket).Path
+docker run --rm -v "${src}:/work" -w /work rapidhtml2png-modx-packager bash -lc "composer config --global audit.block-insecure false && composer install --no-interaction --no-progress && composer run build"
+Copy-Item .\integrations\modx\ready_pocket\_packages\rapidhtml2png-1.0.0-pl.transport.zip .\integrations\modx\rapidhtml2png-1.0.0-pl.transport.zip -Force
+```
+
 ## 1. Что нужно до установки
 
 - MODX Revo `2.8.x`

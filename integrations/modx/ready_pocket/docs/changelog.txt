@@ -1,0 +1,8 @@
+RapidHTML2PNG 1.0.0-pl
+======================
+
+- initial package release
+- manager header render button and modal
+- bulk renderer connector + service
+- snippet for programmatic runs
+- system settings and validators

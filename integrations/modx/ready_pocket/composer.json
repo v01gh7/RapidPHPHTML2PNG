@@ -1,0 +1,13 @@
+{
+  "name": "rapidhtml2png/modx-integration-package",
+  "description": "Build scripts and package source for RapidHTML2PNG MODX Revo integration.",
+  "type": "project",
+  "require-dev": {
+    "modx/revolution": "^2.8"
+  },
+  "scripts": {
+    "build": "php _build/build.transport.php"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

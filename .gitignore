@@ -59,3 +59,10 @@ mcp.*
 assets/media/rapidhtml2png/css_cache/
 test_feature_*.html
 *.png
+
+/vendor/
+/_build/
+/_packages/
+integrations/modx/ready_pocket/vendor/
+integrations/modx/ready_pocket/_packages/
+integrations/modx/ready_pocket/_build/.tmp-config/
